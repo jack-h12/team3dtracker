@@ -14,7 +14,7 @@
  */
 
 import { supabase } from './supabase'
-import type { Task } from './supabase'
+import type { Task, Profile } from './supabase'
 
 // Get 5pm EST in UTC (EST is UTC-5, EDT is UTC-4)
 function getResetTimeToday(): Date {
@@ -73,8 +73,8 @@ export async function addTask(userId: string, description: string, reward?: stri
     throw new Error('Maximum 10 tasks per day')
   }
 
-  const { data, error } = await supabase
-    .from('tasks')
+  const { data, error } = await ((supabase
+    .from('tasks') as any)
     .insert({
       user_id: userId,
       description,
@@ -83,22 +83,22 @@ export async function addTask(userId: string, description: string, reward?: stri
       task_order: currentTasks.length,
     })
     .select()
-    .single()
+    .single())
 
   if (error) throw error
   return data
 }
 
 export async function updateTask(taskId: string, updates: Partial<Task>): Promise<Task> {
-  const { data, error } = await supabase
-    .from('tasks')
+  const { data, error } = await ((supabase
+    .from('tasks') as any)
     .update(updates)
     .eq('id', taskId)
     .select()
-    .single()
+    .single())
 
   if (error) throw error
-  return data
+  return data as Task
 }
 
 export async function completeTask(taskId: string, userId: string): Promise<void> {
@@ -120,13 +120,17 @@ export async function completeTask(taskId: string, userId: string): Promise<void
 
   if (taskError) throw taskError
 
+  // Type assertions
+  const typedProfile = profile as Profile
+  const typedTask = task as Task
+
   // If task is already completed, don't award gold/exp again
-  if (task.is_done) {
+  if (typedTask.is_done) {
     return // Task already completed, no reward
   }
 
   // Check if user has already completed 10 tasks today (daily cap)
-  const tasksCompletedToday = profile.tasks_completed_today || 0
+  const tasksCompletedToday = typedProfile.tasks_completed_today || 0
   if (tasksCompletedToday >= 10) {
     // Still mark the task as done, but don't award rewards
     await updateTask(taskId, { is_done: true })
@@ -160,15 +164,15 @@ export async function completeTask(taskId: string, userId: string): Promise<void
   if (updateError) {
     // Fallback to direct update if function doesn't exist
     console.warn('Database function not available, using direct update:', updateError)
-    const { error: directUpdateError } = await supabase
-      .from('profiles')
+    const { error: directUpdateError } = await ((supabase
+      .from('profiles') as any)
       .update({
         avatar_level: newDailyLevel,
-        lifetime_exp: profile.lifetime_exp + 1,
-        gold: profile.gold + goldReward,
+        lifetime_exp: typedProfile.lifetime_exp + 1,
+        gold: typedProfile.gold + goldReward,
         tasks_completed_today: newTasksCompletedToday,
       })
-      .eq('id', userId)
+      .eq('id', userId))
     
     if (directUpdateError) throw directUpdateError
   }
@@ -193,8 +197,8 @@ export async function deleteTask(taskId: string): Promise<void> {
 export async function updateTaskOrder(userId: string, taskOrders: { taskId: string; order: number }[]): Promise<void> {
   // Update all task orders in a transaction-like manner
   const updates = taskOrders.map(({ taskId, order }) =>
-    supabase
-      .from('tasks')
+    (supabase
+      .from('tasks') as any)
       .update({ task_order: order })
       .eq('id', taskId)
       .eq('user_id', userId)
@@ -220,13 +224,13 @@ export async function resetDailyTasks(userId: string): Promise<void> {
   if (error) throw error
 
   // Reset avatar_level to 0 and tasks_completed_today to 0
-  const { error: profileError } = await supabase
-    .from('profiles')
+  const { error: profileError } = await ((supabase
+    .from('profiles') as any)
     .update({ 
       avatar_level: 0,
       tasks_completed_today: 0
     })
-    .eq('id', userId)
+    .eq('id', userId))
 
   if (profileError) throw profileError
 }

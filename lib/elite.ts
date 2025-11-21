@@ -9,6 +9,7 @@
  */
 
 import { supabase } from './supabase'
+import type { Task } from './supabase'
 
 const MAX_ELITE_USERS = 3
 
@@ -25,7 +26,8 @@ export async function checkAndAwardEliteStatus(userId: string): Promise<boolean>
   }
 
   // Check if user has completed all tasks (10 tasks, all done)
-  if (tasks.length === 10 && tasks.every(t => t.is_done)) {
+  const typedTasks = tasks as Task[]
+  if (typedTasks.length === 10 && typedTasks.every(t => t.is_done)) {
     // Check if user already has elite status
     const { data: profile } = await supabase
       .from('profiles')
@@ -33,7 +35,8 @@ export async function checkAndAwardEliteStatus(userId: string): Promise<boolean>
       .eq('id', userId)
       .single()
 
-    if (profile?.first_completed_all_tasks_at) {
+    const typedProfile = profile as { first_completed_all_tasks_at: string | null } | null
+    if (typedProfile?.first_completed_all_tasks_at) {
       // Already elite
       return true
     }
@@ -53,10 +56,10 @@ export async function checkAndAwardEliteStatus(userId: string): Promise<boolean>
 
     // If less than 3 elite users, award elite status
     if (eliteUsers && eliteUsers.length < MAX_ELITE_USERS) {
-      const { error: updateError } = await supabase
-        .from('profiles')
+      const { error: updateError } = await ((supabase
+        .from('profiles') as any)
         .update({ first_completed_all_tasks_at: new Date().toISOString() })
-        .eq('id', userId)
+        .eq('id', userId))
 
       if (updateError) {
         console.error('Error awarding elite status:', updateError)
@@ -78,7 +81,8 @@ export async function isEliteUser(userId: string): Promise<boolean> {
     .single()
 
   if (error || !data) return false
-  return data.first_completed_all_tasks_at !== null
+  const typedData = data as { first_completed_all_tasks_at: string | null }
+  return typedData.first_completed_all_tasks_at !== null
 }
 
 export async function getEliteUsers() {

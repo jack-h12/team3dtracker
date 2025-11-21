@@ -27,15 +27,15 @@ export async function sendFriendRequest(senderId: string, receiverId: string): P
     throw new Error('Friend request already sent')
   }
 
-  const { data, error } = await supabase
-    .from('friend_requests')
+  const { data, error } = await ((supabase
+    .from('friend_requests') as any)
     .insert({
       sender_id: senderId,
       receiver_id: receiverId,
       status: 'pending',
     })
     .select()
-    .single()
+    .single())
 
   if (error) throw error
   return data
@@ -53,19 +53,19 @@ export async function getFriendRequests(userId: string): Promise<FriendRequest[]
 }
 
 export async function acceptFriendRequest(requestId: string): Promise<void> {
-  const { error } = await supabase
-    .from('friend_requests')
+  const { error } = await ((supabase
+    .from('friend_requests') as any)
     .update({ status: 'accepted' })
-    .eq('id', requestId)
+    .eq('id', requestId))
 
   if (error) throw error
 }
 
 export async function rejectFriendRequest(requestId: string): Promise<void> {
-  const { error } = await supabase
-    .from('friend_requests')
+  const { error } = await ((supabase
+    .from('friend_requests') as any)
     .update({ status: 'rejected' })
-    .eq('id', requestId)
+    .eq('id', requestId))
 
   if (error) throw error
 }

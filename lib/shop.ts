@@ -15,7 +15,7 @@
  */
 
 import { supabase } from './supabase'
-import type { ShopItem, UserInventory } from './supabase'
+import type { ShopItem, UserInventory, Profile } from './supabase'
 
 export async function getShopItems(): Promise<ShopItem[]> {
   const { data, error } = await supabase
@@ -37,8 +37,11 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
 
   if (itemError) throw itemError
 
+  // Type assertion
+  const typedItem = item as ShopItem
+
   // Check if item is restricted (weapon or name_change)
-  const isRestricted = item.type === 'weapon' || item.type === 'name_change'
+  const isRestricted = typedItem.type === 'weapon' || typedItem.type === 'name_change'
   
   if (isRestricted) {
     // Check if user has elite status (first 3 to complete all tasks)
@@ -59,16 +62,19 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
 
   if (profileError) throw profileError
 
+  // Type assertion
+  const typedProfile = profile as Profile
+
   // Check if user has enough gold
-  if (profile.gold < item.cost) {
+  if (typedProfile.gold < typedItem.cost) {
     throw new Error('Not enough gold')
   }
 
   // Deduct gold
-  const { error: goldError } = await supabase
-    .from('profiles')
-    .update({ gold: profile.gold - item.cost })
-    .eq('id', userId)
+  const { error: goldError } = await ((supabase
+    .from('profiles') as any)
+    .update({ gold: typedProfile.gold - typedItem.cost })
+    .eq('id', userId))
 
   if (goldError) throw goldError
 
@@ -81,20 +87,21 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
     .single()
 
   if (existing) {
-    const { error: updateError } = await supabase
-      .from('user_inventory')
-      .update({ quantity: existing.quantity + 1 })
-      .eq('id', existing.id)
+    const typedExisting = existing as UserInventory
+    const { error: updateError } = await ((supabase
+      .from('user_inventory') as any)
+      .update({ quantity: typedExisting.quantity + 1 })
+      .eq('id', typedExisting.id))
 
     if (updateError) throw updateError
   } else {
-    const { error: insertError } = await supabase
-      .from('user_inventory')
+    const { error: insertError } = await ((supabase
+      .from('user_inventory') as any)
       .insert({
         user_id: userId,
         item_id: itemId,
         quantity: 1,
-      })
+      }))
 
     if (insertError) throw insertError
   }
@@ -133,9 +140,11 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
   const itemData = (inventory as any).item
   const item = Array.isArray(itemData) ? itemData[0] : itemData
   if (!item) throw new Error('Item not found')
+  
+  const typedItem = item as ShopItem
 
   // Apply item effects
-  if (item.type === 'weapon' && targetUserId) {
+  if (typedItem.type === 'weapon' && targetUserId) {
     // Get target's profile and inventory
     const { data: targetProfile } = await supabase
       .from('profiles')
@@ -144,16 +153,17 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
       .single()
 
     if (targetProfile) {
+      const typedTargetProfile = targetProfile as Profile
       // Check if target has active potion immunity
-      if (targetProfile.potion_immunity_expires) {
-        const expirationTime = new Date(targetProfile.potion_immunity_expires)
+      if (typedTargetProfile.potion_immunity_expires) {
+        const expirationTime = new Date(typedTargetProfile.potion_immunity_expires)
         if (expirationTime > new Date()) {
           throw new Error('Target is protected by a potion! Immunity is still active.')
         }
       }
       
       // Get weapon damage from effect
-      const weaponDamage = getWeaponDamage(item.effect)
+      const weaponDamage = getWeaponDamage(typedItem.effect)
       // Check if target has armour equipped
       const { data: targetInventory } = await supabase
         .from('user_inventory')
@@ -166,10 +176,10 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
       let totalProtection = 0
       if (targetInventory) {
         // Find armour items and calculate total protection
-        for (const inv of targetInventory) {
+        for (const inv of targetInventory as any[]) {
           const invItem = Array.isArray(inv.item) ? inv.item[0] : inv.item
-          if (invItem && invItem.type === 'armour') {
-            const protection = getProtectionValue(invItem.effect)
+          if (invItem && (invItem as ShopItem).type === 'armour') {
+            const protection = getProtectionValue((invItem as ShopItem).effect)
             totalProtection += protection
           }
         }
@@ -177,10 +187,10 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
 
       // Calculate actual damage (weapon damage - protection, minimum 0)
       const actualDamage = Math.max(0, weaponDamage - totalProtection)
-      const newExp = Math.max(0, targetProfile.lifetime_exp - actualDamage)
+      const newExp = Math.max(0, typedTargetProfile.lifetime_exp - actualDamage)
       
       // Use database function to update target EXP (bypasses RLS)
-      const { error: expUpdateError } = await supabase.rpc('update_target_exp', {
+      const { error: expUpdateError } = await (supabase.rpc as any)('update_target_exp', {
         target_user_id: targetUserId,
         new_exp: newExp
       })
@@ -188,10 +198,10 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
       if (expUpdateError) {
         // Fallback to direct update if function doesn't exist (may fail due to RLS)
         console.warn('Database function not available, trying direct update:', expUpdateError)
-        const { error: directUpdateError } = await supabase
-          .from('profiles')
+        const { error: directUpdateError } = await ((supabase
+          .from('profiles') as any)
           .update({ lifetime_exp: newExp })
-          .eq('id', targetUserId)
+          .eq('id', targetUserId))
         
         if (directUpdateError) {
           console.error('Error updating target EXP:', directUpdateError)
@@ -199,9 +209,9 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
         }
       }
     }
-  } else if (item.type === 'potion') {
+  } else if (typedItem.type === 'potion') {
     // Potion gives immunity - set expiration time
-    const potionName = item.name.toLowerCase()
+    const potionName = typedItem.name.toLowerCase()
     let hours = 24 // Default for Health Potion
     
     if (potionName.includes('super')) {
@@ -212,13 +222,13 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
     expirationTime.setHours(expirationTime.getHours() + hours)
     
     // Update user's potion immunity expiration
-    await supabase
-      .from('profiles')
+    await ((supabase
+      .from('profiles') as any)
       .update({ potion_immunity_expires: expirationTime.toISOString() })
-      .eq('id', userId)
-  } else if (item.type === 'name_change' && targetUserId && customName) {
+      .eq('id', userId))
+  } else if (typedItem.type === 'name_change' && targetUserId && customName) {
     // Change target's display name using database function (bypasses RLS)
-    const { error: nameError } = await supabase.rpc('change_display_name', {
+    const { error: nameError } = await (supabase.rpc as any)('change_display_name', {
       target_user_id: targetUserId,
       new_display_name: customName.trim(),
       changed_by_user_id: userId
@@ -228,9 +238,9 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
       console.error('Error updating display name:', nameError)
       throw new Error(`Failed to change name: ${nameError.message}`)
     }
-  } else if (item.type === 'name_restore') {
+  } else if (typedItem.type === 'name_restore') {
     // Restore user's own name using database function (bypasses RLS)
-    const { error: restoreError } = await supabase.rpc('restore_display_name', {
+    const { error: restoreError } = await (supabase.rpc as any)('restore_display_name', {
       user_id_to_restore: userId
     })
 
@@ -241,11 +251,12 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
   }
 
   // Consume item (reduce quantity)
-  if (inventory.quantity > 1) {
-    await supabase
-      .from('user_inventory')
-      .update({ quantity: inventory.quantity - 1 })
-      .eq('id', inventoryId)
+  const typedInventory = inventory as any
+  if (typedInventory.quantity > 1) {
+    await ((supabase
+      .from('user_inventory') as any)
+      .update({ quantity: typedInventory.quantity - 1 })
+      .eq('id', inventoryId))
   } else {
     await supabase
       .from('user_inventory')

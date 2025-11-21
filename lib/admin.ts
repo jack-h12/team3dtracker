@@ -35,10 +35,10 @@ export async function promoteToAdmin(adminUserId: string, targetUserId: string):
   }
 
   // Promote target user
-  const { error } = await supabase
-    .from('profiles')
+  const { error } = await ((supabase
+    .from('profiles') as any)
     .update({ is_admin: true })
-    .eq('id', targetUserId)
+    .eq('id', targetUserId))
 
   if (error) throw error
 }
@@ -56,10 +56,10 @@ export async function demoteFromAdmin(adminUserId: string, targetUserId: string)
   }
 
   // Demote target user
-  const { error } = await supabase
-    .from('profiles')
+  const { error } = await ((supabase
+    .from('profiles') as any)
     .update({ is_admin: false })
-    .eq('id', targetUserId)
+    .eq('id', targetUserId))
 
   if (error) throw error
 }
