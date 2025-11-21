@@ -14,9 +14,6 @@
 
 'use client'
 
-// Force dynamic rendering to prevent build-time errors with Supabase
-export const dynamic = 'force-dynamic'
-
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getCurrentUser, getCurrentProfile, signOut } from '@/lib/auth'
@@ -53,10 +50,14 @@ export default function Home() {
     // Check for existing session first
     const initAuth = async () => {
       try {
-        // Wait a bit for Supabase to initialize
-        await new Promise(resolve => setTimeout(resolve, 100))
+        // Add timeout to prevent hanging
+        const timeoutId = setTimeout(() => {
+          console.warn('Auth initialization taking too long, showing auth screen')
+          setLoading(false)
+        }, 5000) // 5 second timeout
         
         const { data: { session }, error } = await supabase.auth.getSession()
+        clearTimeout(timeoutId)
         
         if (error) {
           console.error('Error getting session:', error)
@@ -66,11 +67,16 @@ export default function Home() {
         
         if (session?.user) {
           setUser(session.user)
-          const userProfile = await getCurrentProfile()
-          if (userProfile) {
-            setProfile(userProfile)
-            const adminStatus = await isAdmin(session.user.id)
-            setUserIsAdmin(adminStatus)
+          try {
+            const userProfile = await getCurrentProfile()
+            if (userProfile) {
+              setProfile(userProfile)
+              const adminStatus = await isAdmin(session.user.id)
+              setUserIsAdmin(adminStatus)
+            }
+          } catch (profileError) {
+            console.error('Error loading profile:', profileError)
+            // Still show auth screen if profile fails to load
           }
         }
       } catch (err) {
@@ -84,18 +90,22 @@ export default function Home() {
     
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        setUser(session.user)
-        const userProfile = await getCurrentProfile()
-        if (userProfile) {
-          setProfile(userProfile)
-          const adminStatus = await isAdmin(session.user.id)
-          setUserIsAdmin(adminStatus)
+      try {
+        if (session?.user) {
+          setUser(session.user)
+          const userProfile = await getCurrentProfile()
+          if (userProfile) {
+            setProfile(userProfile)
+            const adminStatus = await isAdmin(session.user.id)
+            setUserIsAdmin(adminStatus)
+          }
+        } else {
+          setUser(null)
+          setProfile(null)
+          setUserIsAdmin(false)
         }
-      } else {
-        setUser(null)
-        setProfile(null)
-        setUserIsAdmin(false)
+      } catch (err) {
+        console.error('Error in auth state change:', err)
       }
     })
 
