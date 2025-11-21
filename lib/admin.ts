@@ -24,7 +24,7 @@ export async function isAdmin(userId: string): Promise<boolean> {
     .single()
 
   if (error || !data) return false
-  return data.is_admin === true
+  return (data as { is_admin: boolean }).is_admin === true
 }
 
 export async function promoteToAdmin(adminUserId: string, targetUserId: string): Promise<void> {
