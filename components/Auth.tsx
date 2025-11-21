@@ -100,19 +100,19 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)'
       }}>
         <div style={{ textAlign: 'center', marginBottom: '35px' }}>
-          <div style={{
-            width: '70px',
-            height: '70px',
-            background: 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)',
-            borderRadius: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 900,
-            fontSize: '32px',
-            margin: '0 auto 20px',
-            boxShadow: '0 8px 30px rgba(255, 107, 53, 0.4)'
-          }}>T3D</div>
+          <img
+            src="/team3dicon.webp"
+            alt="Team3D Logo"
+            style={{
+              width: '70px',
+              height: '70px',
+              borderRadius: '16px',
+              margin: '0 auto 20px',
+              boxShadow: '0 8px 30px rgba(255, 107, 53, 0.4)',
+              objectFit: 'cover',
+              display: 'block'
+            }}
+          />
           <h2 style={{
             fontSize: '32px',
             fontWeight: 800,
