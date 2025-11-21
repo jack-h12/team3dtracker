@@ -19,7 +19,25 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Missing Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Create a singleton client instance
+let supabaseClient: ReturnType<typeof createClient> | null = null
+
+export const supabase = (() => {
+  if (supabaseClient) {
+    return supabaseClient
+  }
+
+  supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: typeof window !== 'undefined' ? window.localStorage : undefined
+    }
+  })
+
+  return supabaseClient
+})()
 
 // Helper function to get display name (display_name if set, otherwise username)
 export function getDisplayName(profile: Profile | null | undefined): string {

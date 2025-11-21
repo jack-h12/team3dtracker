@@ -132,6 +132,13 @@ export async function signOut() {
 }
 
 export async function getCurrentUser() {
+  // First check for existing session
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session?.user) {
+    return session.user
+  }
+  
+  // Fallback to getUser() which validates the session
   const { data: { user } } = await supabase.auth.getUser()
   return user
 }

@@ -47,45 +47,65 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    checkUser()
+    // Check for existing session first
+    const initAuth = async () => {
+      try {
+        // Wait a bit for Supabase to initialize
+        await new Promise(resolve => setTimeout(resolve, 100))
+        
+        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        if (error) {
+          console.error('Error getting session:', error)
+          setLoading(false)
+          return
+        }
+        
+        if (session?.user) {
+          setUser(session.user)
+          const userProfile = await getCurrentProfile()
+          if (userProfile) {
+            setProfile(userProfile)
+            const adminStatus = await isAdmin(session.user.id)
+            setUserIsAdmin(adminStatus)
+          }
+        }
+      } catch (err) {
+        console.error('Error initializing auth:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    initAuth()
     
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
         setUser(session.user)
-        loadProfile()
+        const userProfile = await getCurrentProfile()
+        if (userProfile) {
+          setProfile(userProfile)
+          const adminStatus = await isAdmin(session.user.id)
+          setUserIsAdmin(adminStatus)
+        }
       } else {
         setUser(null)
         setProfile(null)
+        setUserIsAdmin(false)
       }
     })
 
     return () => subscription.unsubscribe()
   }, [])
 
-  const checkUser = async () => {
-    try {
-      const currentUser = await getCurrentUser()
-      setUser(currentUser)
-      if (currentUser) {
-        await loadProfile()
-      }
-    } catch (err) {
-      console.error('Error checking user:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const loadProfile = async () => {
-    if (!user) return
-    
+  const loadProfile = async (userId: string) => {
     try {
       const userProfile = await getCurrentProfile()
       if (userProfile) {
         setProfile(userProfile)
         // Check if user is admin
-        const adminStatus = await isAdmin(user.id)
+        const adminStatus = await isAdmin(userId)
         setUserIsAdmin(adminStatus)
         
         // If user is not admin but somehow on admin view, redirect to tasks
@@ -103,7 +123,12 @@ export default function Home() {
   }
 
   const handleAuthSuccess = async () => {
-    await checkUser()
+    // Refresh the session and reload profile
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.user) {
+      setUser(session.user)
+      await loadProfile(session.user.id)
+    }
   }
 
   const handleSignOut = async () => {
@@ -117,11 +142,15 @@ export default function Home() {
   }
 
   const handleTaskComplete = async () => {
-    await loadProfile()
+    if (user) {
+      await loadProfile(user.id)
+    }
   }
 
   const handlePurchase = async () => {
-    await loadProfile()
+    if (user) {
+      await loadProfile(user.id)
+    }
   }
 
   if (loading) {
