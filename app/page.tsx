@@ -52,60 +52,48 @@ export default function Home() {
     // Check for existing session first
     const initAuth = async () => {
       try {
-        // Check if Supabase is properly configured
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+        // Check if Supabase URL is valid (not placeholder)
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
         
-        if (!supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder')) {
+        if (!supabaseUrl || supabaseUrl.includes('placeholder')) {
           console.warn('Supabase not configured - showing auth screen')
+          console.warn('Make sure NEXT_PUBLIC_SUPABASE_URL is set in Vercel environment variables')
           if (mounted) setLoading(false)
           return
         }
         
-        // Use Promise.race to add timeout
-        const sessionPromise = supabase.auth.getSession()
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session check timeout')), 3000)
-        )
+        // Get session - don't use timeout, let it fail naturally
+        // If it takes too long, the browser will handle it
+        const { data: { session }, error } = await supabase.auth.getSession()
         
-        try {
-          const { data: { session }, error } = await Promise.race([
-            sessionPromise,
-            timeoutPromise
-          ]) as any
-          
-          if (!mounted) return
-          
-          if (error) {
-            console.error('Error getting session:', error)
-            setLoading(false)
-            return
-          }
-          
-          if (session?.user) {
-            setUser(session.user)
-            // Load profile in background, don't block UI
-            getCurrentProfile()
-              .then((userProfile) => {
-                if (!mounted) return
-                if (userProfile) {
-                  setProfile(userProfile)
-                  isAdmin(session.user.id).then((adminStatus) => {
-                    if (mounted) setUserIsAdmin(adminStatus)
-                  }).catch(() => {})
-                }
-              })
-              .catch((profileError) => {
-                console.error('Error loading profile:', profileError)
-              })
-              .finally(() => {
-                if (mounted) setLoading(false)
-              })
-          } else {
-            setLoading(false)
-          }
-        } catch (timeoutError) {
-          console.warn('Session check timed out, showing auth screen')
+        if (!mounted) return
+        
+        if (error) {
+          console.error('Error getting session:', error)
+          if (mounted) setLoading(false)
+          return
+        }
+        
+        if (session?.user) {
+          setUser(session.user)
+          // Load profile in background, don't block UI
+          getCurrentProfile()
+            .then((userProfile) => {
+              if (!mounted) return
+              if (userProfile) {
+                setProfile(userProfile)
+                isAdmin(session.user.id).then((adminStatus) => {
+                  if (mounted) setUserIsAdmin(adminStatus)
+                }).catch(() => {})
+              }
+            })
+            .catch((profileError) => {
+              console.error('Error loading profile:', profileError)
+            })
+            .finally(() => {
+              if (mounted) setLoading(false)
+            })
+        } else {
           if (mounted) setLoading(false)
         }
       } catch (err) {

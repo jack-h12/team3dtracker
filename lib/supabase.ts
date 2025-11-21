@@ -12,8 +12,14 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+// Get env vars - these are available at runtime in the browser
+const supabaseUrl = typeof window !== 'undefined' 
+  ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+  : process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+
+const supabaseAnonKey = typeof window !== 'undefined'
+  ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+  : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Missing Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
@@ -31,6 +37,12 @@ export const supabase = (() => {
   // This prevents build errors, but the app won't work until env vars are set
   const url = supabaseUrl || 'https://placeholder.supabase.co'
   const key = supabaseAnonKey || 'placeholder-key'
+
+  // Log for debugging (only in development)
+  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+    console.log('Supabase URL:', url.substring(0, 30) + '...')
+    console.log('Supabase Key set:', !!key && key !== 'placeholder-key')
+  }
 
   supabaseClient = createClient(url, key, {
     auth: {
