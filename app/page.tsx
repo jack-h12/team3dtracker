@@ -14,6 +14,9 @@
 
 'use client'
 
+// Force dynamic rendering to prevent build-time errors with Supabase
+export const dynamic = 'force-dynamic'
+
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getCurrentUser, getCurrentProfile, signOut } from '@/lib/auth'

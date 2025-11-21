@@ -27,7 +27,12 @@ export const supabase = (() => {
     return supabaseClient
   }
 
-  supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+  // During build time, if env vars are missing, use placeholder values
+  // This prevents build errors, but the app won't work until env vars are set
+  const url = supabaseUrl || 'https://placeholder.supabase.co'
+  const key = supabaseAnonKey || 'placeholder-key'
+
+  supabaseClient = createClient(url, key, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
