@@ -1,0 +1,154 @@
+@import url('https://fonts.googleapis.com/css2?family=Russo+One&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  font-family: 'Rajdhani', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+/* Bold, wide, masculine heading font - Russo One */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Russo One', sans-serif;
+  font-weight: 400;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+/* Buttons and UI elements use Rajdhani - modern, tech-forward */
+button, input, select, textarea {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+body {
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0f0f0f 100%);
+  background-attachment: fixed;
+  color: #ffffff;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ff6b35;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #ff4500;
+}
+
+/* Mobile Responsive Styles */
+@media (max-width: 768px) {
+  /* Main Layout - Stack on mobile */
+  .main-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Mobile Menu Button */
+  .mobile-menu-btn {
+    display: block !important;
+  }
+
+  /* Hide logo and username on mobile */
+  .header-logo {
+    display: none !important;
+  }
+
+  .header-username {
+    display: none !important;
+  }
+
+  /* Sidebar - Full width overlay on mobile */
+  .sidebar-mobile.menu-closed {
+    display: none !important;
+  }
+  
+  .sidebar-mobile.menu-open {
+    position: fixed !important;
+    top: 70px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+    z-index: 999;
+    padding: 20px;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
+    display: block !important;
+  }
+
+  /* Responsive grids - stack on mobile */
+  .responsive-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .responsive-grid-2 {
+    grid-template-columns: 1fr !important;
+  }
+
+  .responsive-grid-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Responsive flex - stack on mobile */
+  .responsive-flex {
+    flex-direction: column !important;
+  }
+
+  /* Make tables/lists scrollable */
+  .mobile-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Ensure sidebar is visible on desktop */
+@media (min-width: 769px) {
+  .sidebar-mobile {
+    display: block !important;
+    position: static !important;
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+  }
+}
+
+/* Touch-friendly targets */
+@media (max-width: 768px) {
+  button, a, input[type="button"], input[type="submit"], select {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Larger text on mobile */
+  h1 { font-size: clamp(20px, 6vw, 32px) !important; }
+  h2 { font-size: clamp(18px, 5vw, 28px) !important; }
+  h3 { font-size: clamp(16px, 4vw, 24px) !important; }
+  h4 { font-size: clamp(14px, 3.5vw, 20px) !important; }
+}
+

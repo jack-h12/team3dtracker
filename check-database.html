@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Database Setup Checker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .check { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        button { padding: 10px 20px; background: #0070f3; color: white; border: none; border-radius: 4px; cursor: pointer; margin: 10px 0; }
+        input { padding: 8px; width: 300px; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>Database Setup Checker</h1>
+    <p>Enter your Supabase credentials to check if your database is set up correctly:</p>
+    
+    <div>
+        <label>Supabase URL:</label><br>
+        <input type="text" id="url" placeholder="https://your-project.supabase.co" value="https://xjzqqggohtkphmhtidtf.supabase.co">
+    </div>
+    <div>
+        <label>Anon Key:</label><br>
+        <input type="text" id="key" placeholder="Your anon key">
+    </div>
+    <button onclick="checkDatabase()">Check Database</button>
+    
+    <div id="results"></div>
+
+    <script>
+        async function checkDatabase() {
+            const url = document.getElementById('url').value;
+            const key = document.getElementById('key').value;
+            const results = document.getElementById('results');
+            results.innerHTML = '<p>Checking...</p>';
+
+            if (!url || !key) {
+                results.innerHTML = '<div class="error">Please enter both URL and Anon Key</div>';
+                return;
+            }
+
+            const supabase = window.supabase.createClient(url, key);
+            let html = '';
+
+            // Check 1: Can connect to Supabase
+            try {
+                const { data, error } = await supabase.from('profiles').select('count').limit(0);
+                if (error && error.message.includes('relation') || error.message.includes('does not exist')) {
+                    html += '<div class="error">❌ Profiles table does NOT exist. You need to run the database-setup.sql script.</div>';
+                } else if (error && (error.message.includes('permission') || error.message.includes('policy') || error.message.includes('RLS'))) {
+                    html += '<div class="error">❌ Profiles table exists but RLS is blocking access. Check your RLS policies.</div>';
+                } else if (error) {
+                    html += '<div class="error">❌ Error connecting: ' + error.message + '</div>';
+                } else {
+                    html += '<div class="success">✅ Can connect to Supabase and profiles table exists!</div>';
+                }
+            } catch (e) {
+                html += '<div class="error">❌ Connection error: ' + e.message + '</div>';
+            }
+
+            // Check 2: Try to read profiles (should work if RLS allows)
+            try {
+                const { data, error } = await supabase.from('profiles').select('*').limit(1);
+                if (error) {
+                    html += '<div class="error">⚠️ Cannot read from profiles table: ' + error.message + '</div>';
+                } else {
+                    html += '<div class="success">✅ Can read from profiles table</div>';
+                }
+            } catch (e) {
+                html += '<div class="error">❌ Read test failed: ' + e.message + '</div>';
+            }
+
+            // Check 3: Check if we can get current user (auth test)
+            try {
+                const { data: { user }, error } = await supabase.auth.getUser();
+                if (error) {
+                    html += '<div class="info">ℹ️ Not logged in (this is OK for checking table setup)</div>';
+                } else {
+                    html += '<div class="info">ℹ️ Currently logged in as: ' + (user?.email || 'unknown') + '</div>';
+                }
+            } catch (e) {
+                html += '<div class="info">ℹ️ Auth check: ' + e.message + '</div>';
+            }
+
+            results.innerHTML = html;
+        }
+    </script>
+</body>
+</html>
+
