@@ -56,6 +56,7 @@ export type Profile = {
   avatar_level: number
   lifetime_exp: number
   gold: number
+  tasks_completed_today: number
   potion_immunity_expires?: string | null
   created_at: string
 }

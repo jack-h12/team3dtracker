@@ -179,10 +179,25 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
       const actualDamage = Math.max(0, weaponDamage - totalProtection)
       const newExp = Math.max(0, targetProfile.lifetime_exp - actualDamage)
       
-      await supabase
-        .from('profiles')
-        .update({ lifetime_exp: newExp })
-        .eq('id', targetUserId)
+      // Use database function to update target EXP (bypasses RLS)
+      const { error: expUpdateError } = await supabase.rpc('update_target_exp', {
+        target_user_id: targetUserId,
+        new_exp: newExp
+      })
+      
+      if (expUpdateError) {
+        // Fallback to direct update if function doesn't exist (may fail due to RLS)
+        console.warn('Database function not available, trying direct update:', expUpdateError)
+        const { error: directUpdateError } = await supabase
+          .from('profiles')
+          .update({ lifetime_exp: newExp })
+          .eq('id', targetUserId)
+        
+        if (directUpdateError) {
+          console.error('Error updating target EXP:', directUpdateError)
+          throw new Error(`Failed to attack: ${directUpdateError.message}. Please run fix-attack-and-gold-rls.sql in Supabase SQL Editor.`)
+        }
+      }
     }
   } else if (item.type === 'potion') {
     // Potion gives immunity - set expiration time

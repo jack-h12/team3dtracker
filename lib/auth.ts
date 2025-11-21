@@ -48,21 +48,22 @@ export async function signUp(email: string, password: string, username: string) 
 
   if (existingProfile) {
     // Profile exists, update username if it's different (trigger might have used email)
-    if (existingProfile.username !== username) {
-      const { data: updatedProfile } = await supabase
-        .from('profiles')
+    const typedProfile = existingProfile as Profile
+    if (typedProfile.username !== username) {
+      const { data: updatedProfile } = await ((supabase
+        .from('profiles') as any)
         .update({ username })
         .eq('id', authData.user.id)
         .select()
-        .single()
+        .single())
       
-      return { user: authData.user, profile: updatedProfile || existingProfile, session: authData.session }
+      return { user: authData.user, profile: (updatedProfile as Profile) || typedProfile, session: authData.session }
     }
-    return { user: authData.user, profile: existingProfile, session: authData.session }
+    return { user: authData.user, profile: typedProfile, session: authData.session }
   }
 
   // Try using the database function first (bypasses RLS)
-  const { error: functionError } = await supabase.rpc('create_user_profile', {
+  const { error: functionError } = await (supabase.rpc as any)('create_user_profile', {
     user_id: authData.user.id,
     user_username: username
   })
@@ -86,8 +87,8 @@ export async function signUp(email: string, password: string, username: string) 
   // If function doesn't exist or failed, try direct insert
   console.warn('Database function not available, trying direct insert:', functionError)
   
-  const { data: profileData, error: profileError } = await supabase
-    .from('profiles')
+  const { data: profileData, error: profileError } = await ((supabase
+    .from('profiles') as any)
     .insert({
       id: authData.user.id,
       username,
@@ -96,7 +97,7 @@ export async function signUp(email: string, password: string, username: string) 
       gold: 100, // Starting gold
     })
     .select()
-    .single()
+    .single())
 
   if (profileError) {
     console.error('Profile creation error:', profileError)

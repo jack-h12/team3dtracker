@@ -17,7 +17,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getTodayTasks, addTask, completeTask, deleteTask, shouldResetTasks, resetDailyTasks } from '@/lib/tasks'
+import { getTodayTasks, addTask, completeTask, deleteTask, shouldResetTasks, resetDailyTasks, updateTaskOrder } from '@/lib/tasks'
 import { getCurrentProfile } from '@/lib/auth'
 import { showModal } from '@/lib/modal'
 import type { Task } from '@/lib/supabase'
@@ -33,6 +33,8 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   const [newReward, setNewReward] = useState('')
   const [loading, setLoading] = useState(false)
   const [lastReset, setLastReset] = useState<string | null>(null)
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
+  const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null)
 
   useEffect(() => {
     // Only check reset on initial load
@@ -126,6 +128,76 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    setDraggedTaskId(taskId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/html', taskId)
+  }
+
+  const handleDragOver = (e: React.DragEvent, taskId: string) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (draggedTaskId && draggedTaskId !== taskId) {
+      setDragOverTaskId(taskId)
+    }
+  }
+
+  const handleDragLeave = () => {
+    setDragOverTaskId(null)
+  }
+
+  const handleDrop = async (e: React.DragEvent, targetTaskId: string) => {
+    e.preventDefault()
+    setDragOverTaskId(null)
+    
+    if (!draggedTaskId || draggedTaskId === targetTaskId) {
+      setDraggedTaskId(null)
+      return
+    }
+
+    const draggedTask = tasks.find(t => t.id === draggedTaskId)
+    const targetTask = tasks.find(t => t.id === targetTaskId)
+    
+    if (!draggedTask || !targetTask) {
+      setDraggedTaskId(null)
+      return
+    }
+
+    // Create new order array
+    const newTasks = [...tasks]
+    const draggedIndex = newTasks.findIndex(t => t.id === draggedTaskId)
+    const targetIndex = newTasks.findIndex(t => t.id === targetTaskId)
+    
+    // Remove dragged task from its position
+    const [removed] = newTasks.splice(draggedIndex, 1)
+    // Insert at target position
+    newTasks.splice(targetIndex, 0, removed)
+    
+    // Update task_order for all tasks
+    const taskOrders = newTasks.map((task, index) => ({
+      taskId: task.id,
+      order: index
+    }))
+
+    setLoading(true)
+    try {
+      await updateTaskOrder(userId, taskOrders)
+      // Update local state with new order
+      setTasks(newTasks.map((task, index) => ({ ...task, task_order: index })))
+    } catch (err) {
+      console.error('Error reordering tasks:', err)
+      await showModal('Error', 'Failed to reorder tasks', 'error')
+    } finally {
+      setLoading(false)
+      setDraggedTaskId(null)
+    }
+  }
+
+  const handleDragEnd = () => {
+    setDraggedTaskId(null)
+    setDragOverTaskId(null)
   }
 
   return (
@@ -271,6 +343,12 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
             {tasks.map((task) => (
               <div
                 key={task.id}
+                draggable={!task.is_done && !loading}
+                onDragStart={(e) => handleDragStart(e, task.id)}
+                onDragOver={(e) => handleDragOver(e, task.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, task.id)}
+                onDragEnd={handleDragEnd}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -279,15 +357,51 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                   gap: '10px',
                   background: task.is_done
                     ? 'linear-gradient(135deg, rgba(76, 175, 80, 0.1) 0%, rgba(76, 175, 80, 0.05) 100%)'
+                    : draggedTaskId === task.id
+                    ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
+                    : dragOverTaskId === task.id
+                    ? 'linear-gradient(135deg, rgba(255, 107, 53, 0.2) 0%, rgba(255, 107, 53, 0.1) 100%)'
                     : 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%)',
                   border: task.is_done
                     ? '1px solid rgba(76, 175, 80, 0.3)'
+                    : dragOverTaskId === task.id
+                    ? '2px solid #ff6b35'
                     : '1px solid #3a3a3a',
                   borderRadius: '12px',
                   transition: 'all 0.3s ease',
-                  boxShadow: task.is_done ? '0 4px 15px rgba(76, 175, 80, 0.2)' : 'none'
+                  boxShadow: task.is_done 
+                    ? '0 4px 15px rgba(76, 175, 80, 0.2)' 
+                    : dragOverTaskId === task.id
+                    ? '0 4px 20px rgba(255, 107, 53, 0.4)'
+                    : 'none',
+                  cursor: task.is_done || loading ? 'default' : 'grab',
+                  opacity: draggedTaskId === task.id ? 0.5 : 1,
+                  transform: draggedTaskId === task.id ? 'scale(0.98)' : 'scale(1)'
                 }}
               >
+                {/* Drag Handle */}
+                {!task.is_done && (
+                  <div
+                    style={{
+                      marginRight: '8px',
+                      color: '#666',
+                      fontSize: '16px',
+                      cursor: 'grab',
+                      userSelect: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '4px',
+                      lineHeight: '1'
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <span style={{ 
+                      display: 'inline-block',
+                      transform: 'rotate(90deg)',
+                      letterSpacing: '2px'
+                    }}>⋮⋮</span>
+                  </div>
+                )}
                 <input
                   type="checkbox"
                   checked={task.is_done}
@@ -298,7 +412,8 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                     width: '24px',
                     height: '24px',
                     cursor: task.is_done || loading ? 'not-allowed' : 'pointer',
-                    accentColor: '#ff6b35'
+                    accentColor: '#ff6b35',
+                    flexShrink: 0
                   }}
                 />
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
