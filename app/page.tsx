@@ -47,42 +47,70 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    let mounted = true
+    
     // Check for existing session first
     const initAuth = async () => {
       try {
-        // Add timeout to prevent hanging
-        const timeoutId = setTimeout(() => {
-          console.warn('Auth initialization taking too long, showing auth screen')
-          setLoading(false)
-        }, 5000) // 5 second timeout
+        // Check if Supabase is properly configured
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
         
-        const { data: { session }, error } = await supabase.auth.getSession()
-        clearTimeout(timeoutId)
-        
-        if (error) {
-          console.error('Error getting session:', error)
-          setLoading(false)
+        if (!supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder')) {
+          console.warn('Supabase not configured - showing auth screen')
+          if (mounted) setLoading(false)
           return
         }
         
-        if (session?.user) {
-          setUser(session.user)
-          try {
-            const userProfile = await getCurrentProfile()
-            if (userProfile) {
-              setProfile(userProfile)
-              const adminStatus = await isAdmin(session.user.id)
-              setUserIsAdmin(adminStatus)
-            }
-          } catch (profileError) {
-            console.error('Error loading profile:', profileError)
-            // Still show auth screen if profile fails to load
+        // Use Promise.race to add timeout
+        const sessionPromise = supabase.auth.getSession()
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Session check timeout')), 3000)
+        )
+        
+        try {
+          const { data: { session }, error } = await Promise.race([
+            sessionPromise,
+            timeoutPromise
+          ]) as any
+          
+          if (!mounted) return
+          
+          if (error) {
+            console.error('Error getting session:', error)
+            setLoading(false)
+            return
           }
+          
+          if (session?.user) {
+            setUser(session.user)
+            // Load profile in background, don't block UI
+            getCurrentProfile()
+              .then((userProfile) => {
+                if (!mounted) return
+                if (userProfile) {
+                  setProfile(userProfile)
+                  isAdmin(session.user.id).then((adminStatus) => {
+                    if (mounted) setUserIsAdmin(adminStatus)
+                  }).catch(() => {})
+                }
+              })
+              .catch((profileError) => {
+                console.error('Error loading profile:', profileError)
+              })
+              .finally(() => {
+                if (mounted) setLoading(false)
+              })
+          } else {
+            setLoading(false)
+          }
+        } catch (timeoutError) {
+          console.warn('Session check timed out, showing auth screen')
+          if (mounted) setLoading(false)
         }
       } catch (err) {
         console.error('Error initializing auth:', err)
-      } finally {
-        setLoading(false)
+        if (mounted) setLoading(false)
       }
     }
     
@@ -90,14 +118,16 @@ export default function Home() {
     
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return
+      
       try {
         if (session?.user) {
           setUser(session.user)
           const userProfile = await getCurrentProfile()
-          if (userProfile) {
+          if (userProfile && mounted) {
             setProfile(userProfile)
             const adminStatus = await isAdmin(session.user.id)
-            setUserIsAdmin(adminStatus)
+            if (mounted) setUserIsAdmin(adminStatus)
           }
         } else {
           setUser(null)
@@ -109,7 +139,10 @@ export default function Home() {
       }
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
   }, [])
 
   const loadProfile = async (userId: string) => {
