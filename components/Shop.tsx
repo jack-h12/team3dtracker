@@ -415,7 +415,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         fontSize: '12px',
                         fontWeight: 600,
                         color: '#ccc',
-                        marginBottom: (item.type === 'weapon' || item.type === 'name_change') && !isElite ? '8px' : '0'
+                        marginBottom: '0'
                       }}>
                         <span>🛡️ PROTECTION</span>
                         <span style={{ color: '#4a9eff', fontWeight: 800, fontSize: '14px' }}>
@@ -430,7 +430,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         fontSize: '12px',
                         fontWeight: 600,
                         color: '#ccc',
-                        marginBottom: (item.type === 'weapon' || item.type === 'name_change') && !isElite ? '8px' : '0'
+                        marginBottom: !isElite ? '8px' : '0'
                       }}>
                         <span>⚔️ DAMAGE</span>
                         <span style={{ color: '#ff4444', fontWeight: 800, fontSize: '14px' }}>
