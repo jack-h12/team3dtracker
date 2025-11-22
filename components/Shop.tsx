@@ -26,7 +26,7 @@ import { withRetry } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage, getItemImage } from '@/lib/utils'
 import AttackAnimation from '@/components/AttackAnimation'
-import type { ShopItem, UserInventory } from '@/lib/supabase'
+import type { ShopItem, UserInventory, Profile } from '@/lib/supabase'
 
 interface ShopProps {
   userId: string
