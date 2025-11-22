@@ -170,15 +170,25 @@ export default function Leaderboard() {
       const [user, tasks, inventory] = await Promise.all([
         getUserProfile(userId),
         getUserTasks(userId),
-        getUserInventory(userId),
+        getUserInventory(userId).catch(() => []), // Inventory is optional, don't fail if it errors
       ])
       if (mountedRef.current) {
-        setUserTasks(tasks)
-        setUserInventory(inventory)
+        setUserTasks(tasks || [])
+        setUserInventory(inventory || [])
         setSelectedUser(user)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading user profile:', err)
+      // Show error to user
+      if (mountedRef.current) {
+        setUserTasks([])
+        setUserInventory([])
+        setSelectedUser(null)
+        // If it's a permission error, show helpful message
+        if (err?.message?.includes('permission') || err?.message?.includes('policy') || err?.message?.includes('RLS')) {
+          console.error('Permission denied. Please run fix-view-user-tasks.sql in Supabase SQL Editor to allow viewing user tasks.')
+        }
+      }
     } finally {
       if (mountedRef.current) {
         setLoading(false)

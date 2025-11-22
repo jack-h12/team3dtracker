@@ -1,10 +1,14 @@
 /**
  * Admin Component
  * 
- * Admin panel for managing users:
- * - View all users
+ * Admin panel with Creative Mode - full control over users:
+ * - View all users with detailed stats
  * - Promote/demote users to/from admin
- * - View user stats
+ * - Delete users
+ * - Modify user stats (gold, EXP, level)
+ * - Delete user tasks
+ * - Reset user data
+ * - Change usernames
  * 
  * Only accessible to admin users.
  */
@@ -12,7 +16,19 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { isAdmin, promoteToAdmin, demoteFromAdmin, getAllUsers } from '@/lib/admin'
+import {
+  isAdmin,
+  promoteToAdmin,
+  demoteFromAdmin,
+  getAllUsers,
+  deleteUser,
+  deleteUserTasks,
+  updateUserGold,
+  updateUserExp,
+  updateUserLevel,
+  resetUserData,
+  updateUserUsername
+} from '@/lib/admin'
 import { getDisplayName } from '@/lib/supabase'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage } from '@/lib/utils'
@@ -27,7 +43,8 @@ export default function Admin({ userId }: AdminProps) {
   const [userIsAdmin, setUserIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
-  const [selectedUserId, setSelectedUserId] = useState('')
+  const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set())
+  const [editValues, setEditValues] = useState<Record<string, { gold?: string; exp?: string; level?: string; username?: string }>>({})
 
   const checkAdminAndLoad = useCallback(async () => {
     setLoading(true)
@@ -38,6 +55,17 @@ export default function Admin({ userId }: AdminProps) {
       if (adminStatus) {
         const allUsers = await getAllUsers()
         setUsers(allUsers)
+        // Initialize edit values with current user data
+        const initialValues: Record<string, { gold?: string; exp?: string; level?: string; username?: string }> = {}
+        allUsers.forEach(user => {
+          initialValues[user.id] = {
+            gold: user.gold.toString(),
+            exp: user.lifetime_exp.toString(),
+            level: user.avatar_level.toString(),
+            username: user.username
+          }
+        })
+        setEditValues(initialValues)
       }
     } catch (err) {
       console.error('Error checking admin status:', err)
@@ -49,6 +77,18 @@ export default function Admin({ userId }: AdminProps) {
   useEffect(() => {
     checkAdminAndLoad()
   }, [checkAdminAndLoad])
+
+  const toggleExpand = (userId: string) => {
+    setExpandedUsers(prev => {
+      const next = new Set(prev)
+      if (next.has(userId)) {
+        next.delete(userId)
+      } else {
+        next.add(userId)
+      }
+      return next
+    })
+  }
 
   const handlePromote = useCallback(async (targetUserId: string) => {
     if (actionLoading) return
@@ -85,6 +125,165 @@ export default function Admin({ userId }: AdminProps) {
       setActionLoading(false)
     }
   }, [userId, actionLoading, checkAdminAndLoad])
+
+  const handleDeleteUser = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    
+    const confirmed = await showConfirm(
+      'Delete User',
+      '⚠️ WARNING: This will permanently delete this user and ALL their data (tasks, inventory, etc.). This cannot be undone!'
+    )
+    if (!confirmed) return
+
+    setActionLoading(true)
+    try {
+      await deleteUser(userId, targetUserId)
+      await checkAdminAndLoad()
+      await showModal('Success', 'User deleted successfully!', 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to delete user', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad])
+
+  const handleDeleteTasks = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    
+    const confirmed = await showConfirm('Delete Tasks', 'Delete all tasks for this user?')
+    if (!confirmed) return
+
+    setActionLoading(true)
+    try {
+      await deleteUserTasks(userId, targetUserId)
+      await checkAdminAndLoad()
+      await showModal('Success', 'All tasks deleted!', 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to delete tasks', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad])
+
+  const handleResetUser = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    
+    const confirmed = await showConfirm(
+      'Reset User Data',
+      'Reset this user\'s level and tasks? (Gold and EXP will be kept)'
+    )
+    if (!confirmed) return
+
+    setActionLoading(true)
+    try {
+      await resetUserData(userId, targetUserId)
+      await checkAdminAndLoad()
+      await showModal('Success', 'User data reset!', 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to reset user', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad])
+
+  const handleUpdateGold = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    const goldValue = editValues[targetUserId]?.gold
+    if (!goldValue) return
+
+    const gold = parseInt(goldValue)
+    if (isNaN(gold) || gold < 0) {
+      await showModal('Error', 'Please enter a valid gold amount (0 or higher)', 'error')
+      return
+    }
+
+    setActionLoading(true)
+    try {
+      await updateUserGold(userId, targetUserId, gold)
+      await checkAdminAndLoad()
+      await showModal('Success', `Gold updated to ${gold}!`, 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to update gold', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad, editValues])
+
+  const handleUpdateExp = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    const expValue = editValues[targetUserId]?.exp
+    if (!expValue) return
+
+    const exp = parseInt(expValue)
+    if (isNaN(exp) || exp < 0) {
+      await showModal('Error', 'Please enter a valid EXP amount (0 or higher)', 'error')
+      return
+    }
+
+    setActionLoading(true)
+    try {
+      await updateUserExp(userId, targetUserId, exp)
+      await checkAdminAndLoad()
+      await showModal('Success', `EXP updated to ${exp}!`, 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to update EXP', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad, editValues])
+
+  const handleUpdateLevel = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    const levelValue = editValues[targetUserId]?.level
+    if (!levelValue) return
+
+    const level = parseInt(levelValue)
+    if (isNaN(level) || level < 0 || level > 10) {
+      await showModal('Error', 'Please enter a valid level (0-10)', 'error')
+      return
+    }
+
+    setActionLoading(true)
+    try {
+      await updateUserLevel(userId, targetUserId, level)
+      await checkAdminAndLoad()
+      await showModal('Success', `Level updated to ${level}!`, 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to update level', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad, editValues])
+
+  const handleUpdateUsername = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    const username = editValues[targetUserId]?.username
+    if (!username || username.trim().length === 0) {
+      await showModal('Error', 'Please enter a username', 'error')
+      return
+    }
+
+    setActionLoading(true)
+    try {
+      await updateUserUsername(userId, targetUserId, username.trim())
+      await checkAdminAndLoad()
+      await showModal('Success', 'Username updated!', 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to update username', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad, editValues])
+
+  const updateEditValue = (userId: string, field: 'gold' | 'exp' | 'level' | 'username', value: string) => {
+    setEditValues(prev => ({
+      ...prev,
+      [userId]: {
+        ...prev[userId],
+        [field]: value
+      }
+    }))
+  }
 
   if (loading) {
     return (
@@ -144,9 +343,9 @@ export default function Admin({ userId }: AdminProps) {
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           letterSpacing: '-1px'
-        }}>ADMIN PANEL</h2>
+        }}>ADMIN PANEL - CREATIVE MODE</h2>
         <p style={{ color: '#888', fontSize: '14px', fontWeight: 500 }}>
-          Manage users • Promote admins • View all accounts
+          Full control over users • Modify stats • Delete users • Manage everything
         </p>
       </div>
 
@@ -188,6 +387,17 @@ export default function Admin({ userId }: AdminProps) {
             {users.reduce((sum, u) => sum + u.lifetime_exp, 0).toLocaleString()}
           </div>
         </div>
+        <div style={{
+          padding: '20px',
+          background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
+          border: '1px solid #3a3a3a',
+          borderRadius: '12px'
+        }}>
+          <div style={{ color: '#888', fontSize: '13px', fontWeight: 600, marginBottom: '8px' }}>TOTAL GOLD</div>
+          <div style={{ color: '#ffd700', fontSize: '28px', fontWeight: 800 }}>
+            {users.reduce((sum, u) => sum + u.gold, 0).toLocaleString()}
+          </div>
+        </div>
       </div>
 
       {/* Users List */}
@@ -218,9 +428,14 @@ export default function Admin({ userId }: AdminProps) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {users.map((user) => (
-              <div
-                key={user.id}
+            {users.map((user) => {
+              const isExpanded = expandedUsers.has(user.id)
+              const isCurrentUser = user.id === userId
+              
+              return (
+                <div key={user.id}>
+                  {/* User Card */}
+                  <div
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -231,8 +446,10 @@ export default function Admin({ userId }: AdminProps) {
                     : 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
                   border: `2px solid ${user.is_admin ? '#ffd700' : '#3a3a3a'}`,
                   borderRadius: '14px',
-                  transition: 'all 0.3s ease'
+                      transition: 'all 0.3s ease',
+                      cursor: 'pointer'
                 }}
+                    onClick={() => toggleExpand(user.id)}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.transform = 'translateX(4px)'
                 }}
@@ -305,81 +522,296 @@ export default function Admin({ userId }: AdminProps) {
                     </div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ color: '#888', fontSize: '12px' }}>
+                        {isExpanded ? '▼' : '▶'} {isExpanded ? 'Hide' : 'Edit'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Expanded Controls */}
+                  {isExpanded && (
+                    <div style={{
+                      marginTop: '12px',
+                      padding: '25px',
+                      background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%)',
+                      border: '1px solid #3a3a3a',
+                      borderRadius: '14px'
+                    }}>
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+                        gap: '20px',
+                        marginBottom: '20px'
+                      }}>
+                        {/* Edit Gold */}
+                        <div>
+                          <label style={{ display: 'block', color: '#ffd700', fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>
+                            💰 GOLD
+                          </label>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="number"
+                              value={editValues[user.id]?.gold || user.gold}
+                              onChange={(e) => updateEditValue(user.id, 'gold', e.target.value)}
+                              style={{
+                                flex: 1,
+                                padding: '10px',
+                                background: '#1a1a1a',
+                                border: '1px solid #3a3a3a',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '14px'
+                              }}
+                              min="0"
+                            />
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUpdateGold(user.id); }}
+                              disabled={actionLoading}
+                              style={{
+                                padding: '10px 20px',
+                                background: 'linear-gradient(135deg, #ffd700 0%, #ffb300 100%)',
+                                color: '#000',
+                                border: 'none',
+                                borderRadius: '8px',
+                                cursor: actionLoading ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                                fontSize: '13px'
+                              }}
+                            >
+                              Update
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Edit EXP */}
+                        <div>
+                          <label style={{ display: 'block', color: '#4caf50', fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>
+                            ⭐ EXP
+                          </label>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="number"
+                              value={editValues[user.id]?.exp || user.lifetime_exp}
+                              onChange={(e) => updateEditValue(user.id, 'exp', e.target.value)}
+                              style={{
+                                flex: 1,
+                                padding: '10px',
+                                background: '#1a1a1a',
+                                border: '1px solid #3a3a3a',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '14px'
+                              }}
+                              min="0"
+                            />
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUpdateExp(user.id); }}
+                              disabled={actionLoading}
+                              style={{
+                                padding: '10px 20px',
+                                background: 'linear-gradient(135deg, #4caf50 0%, #45a049 100%)',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '8px',
+                                cursor: actionLoading ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                                fontSize: '13px'
+                              }}
+                            >
+                              Update
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Edit Level */}
+                        <div>
+                          <label style={{ display: 'block', color: '#ff6b35', fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>
+                            📈 LEVEL
+                          </label>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="number"
+                              value={editValues[user.id]?.level || user.avatar_level}
+                              onChange={(e) => updateEditValue(user.id, 'level', e.target.value)}
+                              style={{
+                                flex: 1,
+                                padding: '10px',
+                                background: '#1a1a1a',
+                                border: '1px solid #3a3a3a',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '14px'
+                              }}
+                              min="0"
+                              max="10"
+                            />
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUpdateLevel(user.id); }}
+                              disabled={actionLoading}
+                              style={{
+                                padding: '10px 20px',
+                                background: 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '8px',
+                                cursor: actionLoading ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                                fontSize: '13px'
+                              }}
+                            >
+                              Update
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Edit Username */}
+                        <div>
+                          <label style={{ display: 'block', color: '#fff', fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>
+                            👤 USERNAME
+                          </label>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="text"
+                              value={editValues[user.id]?.username || user.username}
+                              onChange={(e) => updateEditValue(user.id, 'username', e.target.value)}
+                              style={{
+                                flex: 1,
+                                padding: '10px',
+                                background: '#1a1a1a',
+                                border: '1px solid #3a3a3a',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '14px'
+                              }}
+                            />
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUpdateUsername(user.id); }}
+                              disabled={actionLoading}
+                              style={{
+                                padding: '10px 20px',
+                                background: 'linear-gradient(135deg, #2196f3 0%, #1976d2 100%)',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '8px',
+                                cursor: actionLoading ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                                fontSize: '13px'
+                              }}
+                            >
+                              Update
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                        gap: '12px',
+                        marginTop: '20px',
+                        paddingTop: '20px',
+                        borderTop: '1px solid #3a3a3a'
+                      }}>
                   {!user.is_admin ? (
                     <button
-                      onClick={() => handlePromote(user.id)}
-                      disabled={actionLoading || user.id === userId}
+                            onClick={(e) => { e.stopPropagation(); handlePromote(user.id); }}
+                            disabled={actionLoading || isCurrentUser}
                       style={{
-                        padding: '10px 20px',
-                        background: user.id === userId
+                              padding: '12px 20px',
+                              background: isCurrentUser
                           ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
                           : 'linear-gradient(135deg, #ffd700 0%, #ffb300 100%)',
-                        color: user.id === userId ? '#888' : '#000',
+                              color: isCurrentUser ? '#888' : '#000',
                         border: 'none',
                         borderRadius: '10px',
-                        cursor: user.id === userId ? 'not-allowed' : 'pointer',
+                              cursor: isCurrentUser ? 'not-allowed' : 'pointer',
                         fontWeight: 700,
-                        fontSize: '13px',
-                        transition: 'all 0.3s ease',
-                        boxShadow: user.id === userId ? 'none' : '0 4px 15px rgba(255, 215, 0, 0.4)'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!actionLoading && user.id !== userId) {
-                          e.currentTarget.style.transform = 'translateY(-2px)'
-                          e.currentTarget.style.boxShadow = '0 6px 20px rgba(255, 215, 0, 0.5)'
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!actionLoading && user.id !== userId) {
-                          e.currentTarget.style.transform = 'translateY(0)'
-                          e.currentTarget.style.boxShadow = '0 4px 15px rgba(255, 215, 0, 0.4)'
-                        }
-                      }}
-                    >
-                      {user.id === userId ? 'YOU' : '⭐ PROMOTE'}
+                              fontSize: '13px'
+                            }}
+                          >
+                            ⭐ Promote to Admin
                     </button>
                   ) : (
                     <button
-                      onClick={() => handleDemote(user.id)}
-                      disabled={actionLoading || user.id === userId}
+                            onClick={(e) => { e.stopPropagation(); handleDemote(user.id); }}
+                            disabled={actionLoading || isCurrentUser}
                       style={{
-                        padding: '10px 20px',
-                        background: user.id === userId
+                              padding: '12px 20px',
+                              background: isCurrentUser
                           ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
                           : 'linear-gradient(135deg, #ff4444 0%, #cc0000 100%)',
                         color: '#fff',
                         border: 'none',
                         borderRadius: '10px',
-                        cursor: user.id === userId ? 'not-allowed' : 'pointer',
+                              cursor: isCurrentUser ? 'not-allowed' : 'pointer',
+                              fontWeight: 700,
+                              fontSize: '13px'
+                            }}
+                          >
+                            ⬇️ Demote from Admin
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteTasks(user.id); }}
+                          disabled={actionLoading}
+                          style={{
+                            padding: '12px 20px',
+                            background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '10px',
+                            cursor: actionLoading ? 'not-allowed' : 'pointer',
                         fontWeight: 700,
-                        fontSize: '13px',
-                        transition: 'all 0.3s ease',
-                        boxShadow: user.id === userId ? 'none' : '0 4px 15px rgba(255, 68, 68, 0.4)'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!actionLoading && user.id !== userId) {
-                          e.currentTarget.style.transform = 'translateY(-2px)'
-                          e.currentTarget.style.boxShadow = '0 6px 20px rgba(255, 68, 68, 0.5)'
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!actionLoading && user.id !== userId) {
-                          e.currentTarget.style.transform = 'translateY(0)'
-                          e.currentTarget.style.boxShadow = '0 4px 15px rgba(255, 68, 68, 0.4)'
-                        }
-                      }}
-                    >
-                      {user.id === userId ? 'YOU' : '⬇️ DEMOTE'}
+                            fontSize: '13px'
+                          }}
+                        >
+                          🗑️ Delete Tasks
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleResetUser(user.id); }}
+                          disabled={actionLoading}
+                          style={{
+                            padding: '12px 20px',
+                            background: 'linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '10px',
+                            cursor: actionLoading ? 'not-allowed' : 'pointer',
+                            fontWeight: 700,
+                            fontSize: '13px'
+                          }}
+                        >
+                          🔄 Reset User Data
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }}
+                          disabled={actionLoading || isCurrentUser}
+                          style={{
+                            padding: '12px 20px',
+                            background: isCurrentUser
+                              ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
+                              : 'linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '10px',
+                            cursor: isCurrentUser ? 'not-allowed' : 'pointer',
+                            fontWeight: 700,
+                            fontSize: '13px'
+                          }}
+                        >
+                          ⚠️ Delete User
                     </button>
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
     </div>
   )
 }
-
