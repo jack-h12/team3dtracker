@@ -11,9 +11,10 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, memo, useCallback } from 'react'
 import { getDisplayName } from '@/lib/supabase'
 import { getUserInventory, getWeaponDamage, getProtectionValue } from '@/lib/shop'
+import { getAvatarImage, getAvatarColor, getItemImage, getPotionTimeRemaining, getArmourTimeRemaining } from '@/lib/utils'
 import type { Profile, ShopItem, UserInventory } from '@/lib/supabase'
 
 interface AvatarProps {
@@ -21,110 +22,97 @@ interface AvatarProps {
   showEquipped?: boolean // Whether to show equipped items on avatar
 }
 
-export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
+function Avatar({ profile, showEquipped = true }: AvatarProps) {
   const [equippedItems, setEquippedItems] = useState<(UserInventory & { item: ShopItem })[]>([])
   const [showPotionTooltip, setShowPotionTooltip] = useState(false)
+  const [showArmourTooltip, setShowArmourTooltip] = useState(false)
+
+  const loadEquippedItems = useCallback(async () => {
+    try {
+      const inventory = await getUserInventory(profile.id)
+      const now = new Date()
+      // Get weapons and armor only, filter out expired armour
+      const weaponsAndArmor = inventory.filter(inv => {
+        if (inv.item.type === 'weapon') return true
+        if (inv.item.type === 'armour') {
+          // Only include armour that hasn't expired
+          if (inv.expires_at) {
+            const expirationDate = new Date(inv.expires_at)
+            return expirationDate > now
+          }
+          // If no expiration date, include it (backward compatibility)
+          return true
+        }
+        return false
+      })
+      setEquippedItems(weaponsAndArmor)
+    } catch (err) {
+      console.error('Error loading equipped items:', err)
+    }
+  }, [profile.id])
 
   useEffect(() => {
     if (showEquipped) {
       loadEquippedItems()
     }
-  }, [profile.id, showEquipped])
+  }, [showEquipped, loadEquippedItems])
 
-  const loadEquippedItems = async () => {
-    try {
-      const inventory = await getUserInventory(profile.id)
-      // Get weapons and armor only
-      const weaponsAndArmor = inventory.filter(inv => 
-        inv.item.type === 'weapon' || inv.item.type === 'armour'
-      )
-      setEquippedItems(weaponsAndArmor)
-    } catch (err) {
-      console.error('Error loading equipped items:', err)
-    }
-  }
+  // Find most powerful weapon (highest damage) - memoized
+  const topWeapon = useMemo(() => {
+    const weapons = equippedItems.filter(inv => inv.item.type === 'weapon')
+    return weapons.length > 0 ? weapons.reduce((best, current) => {
+      const bestDamage = getWeaponDamage(best.item.effect)
+      const currentDamage = getWeaponDamage(current.item.effect)
+      return currentDamage > bestDamage ? current : best
+    }) : null
+  }, [equippedItems])
 
-  const getItemImage = (item: ShopItem): string => {
-    if (item.type === 'weapon') {
-      const name = item.name.toLowerCase()
-      if (name.includes('wooden')) return '/Wooden Sword.png'
-      if (name.includes('iron')) return '/iron sword.webp'
-      if (name.includes('diamond')) return '/diamond sword.webp'
-      if (item.cost <= 50) return '/Wooden Sword.png'
-      if (item.cost <= 150) return '/iron sword.webp'
-      return '/diamond sword.webp'
-    } else if (item.type === 'armour') {
-      const name = item.name.toLowerCase()
-      if (name.includes('leather')) return '/leather armour.png'
-      if (name.includes('iron')) return '/iron armour.png'
-      if (name.includes('diamond') || name.includes('steel')) return '/diamond armour.webp'
-      if (item.cost <= 100) return '/leather armour.png'
-      if (item.cost <= 250) return '/iron armour.png'
-      return '/diamond armour.webp'
-    }
-    return ''
-  }
-
-  // Find most powerful weapon (highest damage)
-  const weapons = equippedItems.filter(inv => inv.item.type === 'weapon')
-  const topWeapon = weapons.length > 0 ? weapons.reduce((best, current) => {
-    const bestDamage = getWeaponDamage(best.item.effect)
-    const currentDamage = getWeaponDamage(current.item.effect)
-    return currentDamage > bestDamage ? current : best
-  }) : null
-
-  // Find most powerful armor (highest protection)
-  const armors = equippedItems.filter(inv => inv.item.type === 'armour')
-  const topArmor = armors.length > 0 ? armors.reduce((best, current) => {
-    const bestProtection = getProtectionValue(best.item.effect)
-    const currentProtection = getProtectionValue(current.item.effect)
-    return currentProtection > bestProtection ? current : best
-  }) : null
+  // Find most powerful armor (highest protection) - memoized
+  // Only count armour that hasn't expired
+  const topArmor = useMemo(() => {
+    const now = new Date()
+    const validArmors = equippedItems.filter(inv => {
+      if (inv.item.type !== 'armour') return false
+      // Check if armour is expired
+      if (inv.expires_at) {
+        const expirationDate = new Date(inv.expires_at)
+        return expirationDate > now
+      }
+      // If no expiration date, assume it's still valid (for backward compatibility)
+      return true
+    })
+    
+    return validArmors.length > 0 ? validArmors.reduce((best, current) => {
+      const bestProtection = getProtectionValue(best.item.effect)
+      const currentProtection = getProtectionValue(current.item.effect)
+      return currentProtection > bestProtection ? current : best
+    }) : null
+  }, [equippedItems])
+  
+  // Calculate armour time remaining for tooltip
+  const armourTimeRemaining = useMemo(() => {
+    if (!topArmor || !topArmor.expires_at) return ''
+    return getArmourTimeRemaining(topArmor.expires_at)
+  }, [topArmor])
 
   // Check if potion is active
-  const isPotionActive = profile.potion_immunity_expires 
-    ? new Date(profile.potion_immunity_expires) > new Date()
-    : false
+  const isPotionActive = useMemo(() => {
+    return profile.potion_immunity_expires 
+      ? new Date(profile.potion_immunity_expires) > new Date()
+      : false
+  }, [profile.potion_immunity_expires])
   
-  const getPotionTimeRemaining = (): string => {
-    if (!profile.potion_immunity_expires) return ''
-    const expires = new Date(profile.potion_immunity_expires)
-    const now = new Date()
-    const diff = expires.getTime() - now.getTime()
-    
-    if (diff <= 0) return 'Expired'
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes}m remaining`
-    }
-    return `${minutes}m remaining`
-  }
-  // Get avatar image based on level
-  const getAvatarImage = (level: number): string => {
-    if (level === 0) return '/smeagol-level1.webp' // Use level 1 image for level 0
-    if (level === 1) return '/smeagol-level1.webp'
-    if (level === 2) return '/babythanos-level2.jpg'
-    if (level === 3) return '/boy thanos-level3.jpg'
-    if (level === 4) return '/young thanos-level4.jpg'
-    if (level === 5) return '/thanos one stone-level5.jpg'
-    if (level === 6) return '/thanos two stones-level6.avif'
-    if (level === 7) return '/thanos 3 stones-level7.jpg'
-    if (level === 8) return '/thanos 4 stones-level8.jpg'
-    if (level === 9) return '/thanos 5 stones-level9.jpg'
-    return '/goku thanos-level10.webp' // level 10
-  }
+  const potionTimeRemaining = useMemo(() => {
+    return getPotionTimeRemaining(profile.potion_immunity_expires)
+  }, [profile.potion_immunity_expires])
 
-  const getAvatarColor = (level: number) => {
-    if (level === 0) return '#cccccc'
-    if (level <= 2) return '#ffeb3b'
-    if (level <= 4) return '#ff9800'
-    if (level <= 6) return '#4caf50'
-    if (level <= 8) return '#2196f3'
-    return '#ff6b35' // Changed to match theme for max level
-  }
+  // Memoize expensive calculations
+  const avatarLevel = profile.avatar_level
+  const avatarImage = useMemo(() => getAvatarImage(avatarLevel), [avatarLevel])
+  const avatarColor = useMemo(() => getAvatarColor(avatarLevel), [avatarLevel])
+  const progressWidth = useMemo(() => `${(avatarLevel / 10) * 100}%`, [avatarLevel])
+  const progressPercent = useMemo(() => avatarLevel * 10, [avatarLevel])
+  const avatarColorWithOpacity = useMemo(() => `${avatarColor}dd`, [avatarColor])
 
   return (
     <div style={{
@@ -141,7 +129,7 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
-          filter: `drop-shadow(0 0 20px ${getAvatarColor(profile.avatar_level)})`,
+          filter: `drop-shadow(0 0 20px ${avatarColor})`,
           position: 'relative'
         }}
       >
@@ -150,7 +138,7 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
           <div
             style={{
               position: 'absolute',
-              top: '-12px',
+              top: '-24px',
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 3,
@@ -198,7 +186,7 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
                     animation: 'fadeIn 0.2s ease-out'
                   }}
                 >
-                  {getPotionTimeRemaining()}
+                  {potionTimeRemaining}
                   <div
                     style={{
                       position: 'absolute',
@@ -226,14 +214,14 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
         
         {/* Avatar Image */}
         <img
-          src={getAvatarImage(profile.avatar_level)}
-          alt={`Level ${profile.avatar_level} avatar`}
+          src={avatarImage}
+          alt={`Level ${avatarLevel} avatar`}
           style={{
             width: 'clamp(100px, 20vw, 140px)',
             height: 'clamp(100px, 20vw, 140px)',
             objectFit: 'cover',
             borderRadius: '16px',
-            border: `3px solid ${getAvatarColor(profile.avatar_level)}`,
+            border: `3px solid ${avatarColor}`,
             boxShadow: `0 8px 30px rgba(255, 107, 53, 0.3)`,
             position: 'relative',
             zIndex: 1
@@ -264,24 +252,75 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
         
         {/* Equipped Armor - Bottom Right (overlapping avatar) */}
         {showEquipped && topArmor && (
-          <img
-            src={getItemImage(topArmor.item)}
-            alt={topArmor.item.name}
+          <div
             style={{
               position: 'absolute',
               bottom: '10px',
               right: '10px',
-              width: '40px',
-              height: '40px',
-              objectFit: 'contain',
-              filter: 'drop-shadow(0 2px 8px rgba(74, 158, 255, 0.6))',
               zIndex: 2,
-              background: 'rgba(0, 0, 0, 0.7)',
-              borderRadius: '8px',
-              padding: '4px',
-              border: '2px solid #4a9eff'
+              cursor: armourTimeRemaining ? 'pointer' : 'default'
             }}
-          />
+            onMouseEnter={() => armourTimeRemaining && setShowArmourTooltip(true)}
+            onMouseLeave={() => setShowArmourTooltip(false)}
+          >
+            <img
+              src={getItemImage(topArmor.item)}
+              alt={topArmor.item.name}
+              style={{
+                width: '40px',
+                height: '40px',
+                objectFit: 'contain',
+                filter: 'drop-shadow(0 2px 8px rgba(74, 158, 255, 0.6))',
+                background: 'rgba(0, 0, 0, 0.7)',
+                borderRadius: '8px',
+                padding: '4px',
+                border: '2px solid #4a9eff',
+                position: 'relative'
+              }}
+            />
+            {/* Tooltip on hover */}
+            {showArmourTooltip && armourTimeRemaining && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '100%',
+                  right: '0',
+                  marginBottom: '8px',
+                  padding: '8px 12px',
+                  background: 'rgba(0, 0, 0, 0.95)',
+                  color: '#4a9eff',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  borderRadius: '8px',
+                  whiteSpace: 'nowrap',
+                  border: '1px solid #4a9eff',
+                  boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)',
+                  zIndex: 10,
+                  animation: 'fadeIn 0.2s ease-out'
+                }}
+              >
+                {armourTimeRemaining}
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: '12px',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '6px solid transparent',
+                    borderRight: '6px solid transparent',
+                    borderTop: '6px solid #4a9eff'
+                  }}
+                />
+                <style>{`
+                  @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(5px); }
+                    to { opacity: 1; transform: translateY(0); }
+                  }
+                `}</style>
+              </div>
+            )}
+          </div>
         )}
       </div>
       <h3 style={{
@@ -325,7 +364,7 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
             color: '#ff6b35',
             fontSize: 'clamp(16px, 3.5vw, 20px)',
             fontWeight: 800
-          }}>{profile.avatar_level}/10</span>
+          }}>{avatarLevel}/10</span>
         </div>
         <div style={{
           display: 'flex',
@@ -371,7 +410,7 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
           color: '#888'
         }}>
           <span>PROGRESS</span>
-          <span>{profile.avatar_level * 10}%</span>
+          <span>{progressPercent}%</span>
         </div>
         <div
           style={{
@@ -385,11 +424,11 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
         >
           <div
             style={{
-              width: `${(profile.avatar_level / 10) * 100}%`,
+              width: progressWidth,
               height: '100%',
-              background: `linear-gradient(90deg, ${getAvatarColor(profile.avatar_level)} 0%, ${getAvatarColor(profile.avatar_level)}dd 100%)`,
+              background: `linear-gradient(90deg, ${avatarColor} 0%, ${avatarColorWithOpacity} 100%)`,
               transition: 'width 0.5s ease',
-              boxShadow: `0 0 10px ${getAvatarColor(profile.avatar_level)}`
+              boxShadow: `0 0 10px ${avatarColor}`
             }}
           />
         </div>
@@ -397,4 +436,19 @@ export default function Avatar({ profile, showEquipped = true }: AvatarProps) {
     </div>
   )
 }
+
+// Memoize component to prevent re-renders when profile object reference changes but values don't
+export default memo(Avatar, (prevProps, nextProps) => {
+  // Only re-render if these specific values change
+  return (
+    prevProps.profile.avatar_level === nextProps.profile.avatar_level &&
+    prevProps.profile.lifetime_exp === nextProps.profile.lifetime_exp &&
+    prevProps.profile.gold === nextProps.profile.gold &&
+    prevProps.profile.potion_immunity_expires === nextProps.profile.potion_immunity_expires &&
+    prevProps.profile.id === nextProps.profile.id &&
+    prevProps.profile.username === nextProps.profile.username &&
+    prevProps.profile.display_name === nextProps.profile.display_name &&
+    prevProps.showEquipped === nextProps.showEquipped
+  )
+})
 

@@ -86,11 +86,25 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
     .eq('item_id', itemId)
     .single()
 
+  // Set expiration date for armour items (2 weeks from now)
+  let expiresAt: string | null = null
+  if (typedItem.type === 'armour') {
+    const expirationDate = new Date()
+    expirationDate.setDate(expirationDate.getDate() + 14) // 2 weeks = 14 days
+    expiresAt = expirationDate.toISOString()
+  }
+
   if (existing) {
     const typedExisting = existing as UserInventory
+    // Update quantity and refresh expiration date if it's armour (each purchase resets expiration)
+    const updateData: any = { quantity: typedExisting.quantity + 1 }
+    if (typedItem.type === 'armour') {
+      updateData.expires_at = expiresAt
+    }
+    
     const { error: updateError } = await ((supabase
       .from('user_inventory') as any)
-      .update({ quantity: typedExisting.quantity + 1 })
+      .update(updateData)
       .eq('id', typedExisting.id))
 
     if (updateError) throw updateError
@@ -101,6 +115,7 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
         user_id: userId,
         item_id: itemId,
         quantity: 1,
+        expires_at: expiresAt, // null for non-armour items
       }))
 
     if (insertError) throw insertError
@@ -173,20 +188,32 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
         `)
         .eq('user_id', targetUserId)
 
-      let totalProtection = 0
+      let maxProtection = 0
       if (targetInventory) {
-        // Find armour items and calculate total protection
+        // Find armour items and get the highest protection value (protection doesn't stack)
+        // Only count armour that hasn't expired (2 weeks from purchase)
         for (const inv of targetInventory as any[]) {
           const invItem = Array.isArray(inv.item) ? inv.item[0] : inv.item
           if (invItem && (invItem as ShopItem).type === 'armour') {
+            // Check if armour is expired
+            const expiresAt = (inv as UserInventory).expires_at
+            if (expiresAt) {
+              const expirationDate = new Date(expiresAt)
+              const now = new Date()
+              if (expirationDate <= now) {
+                // Armour has expired, skip it
+                continue
+              }
+            }
             const protection = getProtectionValue((invItem as ShopItem).effect)
-            totalProtection += protection
+            maxProtection = Math.max(maxProtection, protection)
           }
         }
       }
 
-      // Calculate actual damage (weapon damage - protection, minimum 0)
-      const actualDamage = Math.max(0, weaponDamage - totalProtection)
+      // Calculate actual damage (weapon damage - highest protection, minimum 0)
+      // Only the highest protection armour piece counts (doesn't stack)
+      const actualDamage = Math.max(0, weaponDamage - maxProtection)
       const newExp = Math.max(0, typedTargetProfile.lifetime_exp - actualDamage)
       
       // Use database function to update target EXP (bypasses RLS)

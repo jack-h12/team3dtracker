@@ -12,17 +12,17 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-// Get env vars - these are available at runtime in the browser
-const supabaseUrl = typeof window !== 'undefined' 
-  ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-  : process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-
-const supabaseAnonKey = typeof window !== 'undefined'
-  ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-  : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+// Get env vars - Next.js replaces NEXT_PUBLIC_* vars at build time
+// They're available in both browser and server contexts
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Missing Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
+  if (typeof window !== 'undefined') {
+    console.warn('Missing Supabase environment variables. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
+    console.warn('For localhost: Create a .env.local file with these variables')
+    console.warn('For Vercel: Set these in your Vercel project environment variables')
+  }
 }
 
 // Create a singleton client instance
@@ -33,15 +33,24 @@ export const supabase = (() => {
     return supabaseClient
   }
 
-  // During build time, if env vars are missing, use placeholder values
-  // This prevents build errors, but the app won't work until env vars are set
+  // Use env vars directly - fallback to placeholder only if truly missing
   const url = supabaseUrl || 'https://placeholder.supabase.co'
   const key = supabaseAnonKey || 'placeholder-key'
 
+  // Validate that we have real values (not placeholders)
+  if (url.includes('placeholder') || key.includes('placeholder')) {
+    if (typeof window !== 'undefined') {
+      console.error('Supabase not configured properly. Using placeholder values. The app will not work until environment variables are set.')
+    }
+  }
+
   // Log for debugging (only in development)
   if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-    console.log('Supabase URL:', url.substring(0, 30) + '...')
-    console.log('Supabase Key set:', !!key && key !== 'placeholder-key')
+    console.log('Supabase initialized:', {
+      urlSet: !!url && !url.includes('placeholder'),
+      keySet: !!key && !key.includes('placeholder'),
+      urlPreview: url.substring(0, 30) + (url.length > 30 ? '...' : '')
+    })
   }
 
   supabaseClient = createClient(url, key, {
@@ -109,5 +118,6 @@ export type UserInventory = {
   user_id: string
   item_id: string
   quantity: number
+  expires_at?: string | null // Expiration date for armour items (2 weeks from purchase)
 }
 

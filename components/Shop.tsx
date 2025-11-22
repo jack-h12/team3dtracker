@@ -17,12 +17,14 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getShopItems, purchaseItem, getUserInventory, useItem, getEffectDescription, getProtectionValue, getWeaponDamage } from '@/lib/shop'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
-import { getDisplayName } from '@/lib/supabase'
+import { getDisplayName, supabase } from '@/lib/supabase'
 import { isEliteUser } from '@/lib/elite'
+import { withRetry } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
+import { getAvatarImage, getItemImage } from '@/lib/utils'
 import AttackAnimation from '@/components/AttackAnimation'
 import type { ShopItem, UserInventory } from '@/lib/supabase'
 
@@ -34,39 +36,98 @@ interface ShopProps {
 export default function Shop({ userId, onPurchase }: ShopProps) {
   const [items, setItems] = useState<ShopItem[]>([])
   const [inventory, setInventory] = useState<(UserInventory & { item: ShopItem })[]>([])
-  const [allUsers, setAllUsers] = useState<any[]>([])
+  const [allUsers, setAllUsers] = useState<Profile[]>([])
   const [selectedTarget, setSelectedTarget] = useState('')
   const [customName, setCustomName] = useState('')
   const [loading, setLoading] = useState(false)
   const [isElite, setIsElite] = useState(false)
   const [showAttackAnimation, setShowAttackAnimation] = useState(false)
   const [attackTarget, setAttackTarget] = useState<{ avatar: string; name: string; sword: string } | null>(null)
+  const isLoadingRef = useRef(false)
+  const mountedRef = useRef(true)
+  const hasInitialDataRef = useRef(false)
 
-  useEffect(() => {
-    loadData()
-  }, [userId])
+  const loadData = useCallback(async (silent: boolean = false) => {
+    // Prevent duplicate calls
+    if (isLoadingRef.current) {
+      console.log('Shop: Already loading, skipping duplicate call')
+      return
+    }
 
-  const loadData = async () => {
-    setLoading(true)
+    if (!mountedRef.current) return
+
+    isLoadingRef.current = true
+    // Only show loading UI if we haven't loaded initial data yet and not silent
+    if (!silent && !hasInitialDataRef.current) {
+      setLoading(true)
+    }
     try {
       const [shopItems, userInv, users, eliteStatus] = await Promise.all([
-        getShopItems(),
-        getUserInventory(userId),
-        getDailyLeaderboard(),
-        isEliteUser(userId),
+        withRetry(() => getShopItems(), { maxRetries: 3, timeout: 15000 }),
+        withRetry(() => getUserInventory(userId), { maxRetries: 3, timeout: 15000 }),
+        withRetry(() => getDailyLeaderboard(), { maxRetries: 3, timeout: 15000 }),
+        withRetry(() => isEliteUser(userId), { maxRetries: 3, timeout: 15000 }),
       ])
-      setItems(shopItems)
-      setInventory(userInv)
-      setAllUsers(users.filter((u: any) => u.id !== userId))
-      setIsElite(eliteStatus)
+      
+      if (mountedRef.current) {
+        setItems(shopItems)
+        setInventory(userInv)
+        setAllUsers(users.filter((u) => u.id !== userId))
+        setIsElite(eliteStatus)
+        // Mark that we've loaded initial data
+        hasInitialDataRef.current = true
+      }
     } catch (err) {
       console.error('Error loading shop data:', err)
     } finally {
-      setLoading(false)
+      isLoadingRef.current = false
+      if (mountedRef.current) {
+        // Only clear loading state if we were showing it (not silent refresh)
+        if (!silent) {
+          setLoading(false)
+        }
+      }
     }
-  }
+  }, [userId])
 
-  const handlePurchase = async (itemId: string) => {
+  useEffect(() => {
+    mountedRef.current = true
+    isLoadingRef.current = false
+
+    // Run on mount - fetch data when component first loads
+    loadData()
+
+    // Run whenever the tab becomes active again
+    // Silently refresh data in background without clearing UI
+    const handler = () => {
+      // Only reload if tab is visible (not hidden) and not already loading
+      if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
+        console.log('Shop: Tab became visible, silently refreshing data...')
+        // Reset loading flag to allow fresh load
+        isLoadingRef.current = false
+        // Wait a moment for browser to be ready
+        setTimeout(() => {
+          if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
+            // Pass silent=true to refresh without showing loading state
+            loadData(true)
+          }
+        }, 500)
+      }
+    }
+
+    // Listen for visibility changes (when user switches tabs)
+    document.addEventListener("visibilitychange", handler)
+
+    return () => {
+      mountedRef.current = false
+      document.removeEventListener("visibilitychange", handler)
+      isLoadingRef.current = false
+    }
+  }, [loadData])
+
+  const handlePurchase = useCallback(async (itemId: string) => {
+    if (loading) return
+    
     const confirmed = await showConfirm('Purchase Item', 'Purchase this item?')
     if (!confirmed) return
 
@@ -81,9 +142,9 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [userId, loading, loadData, onPurchase])
 
-  const handleUseItem = async (inventoryId: string, itemType: string) => {
+  const handleUseItem = useCallback(async (inventoryId: string, itemType: string) => {
     if (itemType === 'weapon') {
       if (!selectedTarget) {
         await showModal('Warning', 'Please select a target user', 'warning')
@@ -98,20 +159,6 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
         const weaponItem = inventory.find(inv => inv.id === inventoryId)?.item
         const swordImage = weaponItem ? getItemImage(weaponItem) : '/Wooden Sword.png'
         
-        // Get avatar image based on target's level
-        const getAvatarImage = (level: number): string => {
-          if (level === 0) return '/smeagol-level1.webp'
-          if (level === 1) return '/smeagol-level1.webp'
-          if (level === 2) return '/babythanos-level2.jpg'
-          if (level === 3) return '/boy thanos-level3.jpg'
-          if (level === 4) return '/young thanos-level4.jpg'
-          if (level === 5) return '/thanos one stone-level5.jpg'
-          if (level === 6) return '/thanos two stones-level6.avif'
-          if (level === 7) return '/thanos 3 stones-level7.jpg'
-          if (level === 8) return '/thanos 4 stones-level8.jpg'
-          if (level === 9) return '/thanos 5 stones-level9.jpg'
-          return '/goku thanos-level10.webp'
-        }
 
         // Show attack animation
         setAttackTarget({
@@ -172,62 +219,9 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [selectedTarget, customName, allUsers, inventory, userId, loadData])
 
-  const getItemImage = (item: ShopItem): string => {
-    if (item.type === 'weapon') {
-      // Map weapons to sword images based on name
-      const name = item.name.toLowerCase()
-      if (name.includes('wooden')) {
-        return '/Wooden Sword.png'
-      } else if (name.includes('iron')) {
-        return '/iron sword.webp'
-      } else if (name.includes('diamond')) {
-        return '/diamond sword.webp'
-      }
-      // Fallback to cost-based mapping
-      if (item.cost <= 50) {
-        return '/Wooden Sword.png'
-      } else if (item.cost <= 150) {
-        return '/iron sword.webp'
-      } else {
-        return '/diamond sword.webp'
-      }
-    } else if (item.type === 'armour') {
-      // Map armour to armour images based on name
-      const name = item.name.toLowerCase()
-      if (name.includes('leather')) {
-        return '/leather armour.png'
-      } else if (name.includes('iron')) {
-        return '/iron armour.png'
-      } else if (name.includes('diamond') || name.includes('steel')) {
-        return '/diamond armour.webp'
-      }
-      // Fallback to cost-based mapping
-      if (item.cost <= 100) {
-        return '/leather armour.png'
-      } else if (item.cost <= 250) {
-        return '/iron armour.png'
-      } else {
-        return '/diamond armour.webp'
-      }
-    } else if (item.type === 'potion') {
-      return '🧪' // Keep emoji for potions
-    } else if (item.type === 'pet') {
-      const name = item.name.toLowerCase()
-      if (name.includes('gorilla')) {
-        return '/pet gorilla.jpg'
-      }
-      return '🐾' // Fallback emoji for pets
-    } else if (item.type === 'name_change') {
-      return '📜' // Name change scroll
-    } else if (item.type === 'name_restore') {
-      return '✨' // Name restore scroll
-    }
-    return '📦'
-  }
-
-  const getItemEmoji = (type: string) => {
+  const getItemEmoji = useCallback((type: string) => {
     switch (type) {
       case 'weapon': return '⚔️'
       case 'armour': return '🛡️'
@@ -237,10 +231,10 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       case 'name_restore': return '✨'
       default: return '📦'
     }
-  }
+  }, [])
 
 
-  const getItemTypeColor = (type: string) => {
+  const getItemTypeColor = useCallback((type: string) => {
     switch (type) {
       case 'weapon': return { bg: 'linear-gradient(135deg, #8b0000 0%, #5a0000 100%)', border: '#ff4444', glow: 'rgba(255, 68, 68, 0.4)' }
       case 'armour': return { bg: 'linear-gradient(135deg, #1a3a5a 0%, #0f1f2e 100%)', border: '#4a9eff', glow: 'rgba(74, 158, 255, 0.4)' }
@@ -248,7 +242,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       case 'pet': return { bg: 'linear-gradient(135deg, #5a3a1a 0%, #3d2811 100%)', border: '#d4a574', glow: 'rgba(212, 165, 116, 0.4)' }
       default: return { bg: 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)', border: '#3a3a3a', glow: 'rgba(0, 0, 0, 0.2)' }
     }
-  }
+  }, [])
 
   return (
     <div>
@@ -409,19 +403,34 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                       </span>
                     </div>
                     {item.type === 'armour' && (
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        color: '#ccc',
-                        marginBottom: '0'
-                      }}>
-                        <span>🛡️ PROTECTION</span>
-                        <span style={{ color: '#4a9eff', fontWeight: 800, fontSize: '14px' }}>
-                          {getProtectionValue(item.effect)} PROT.
-                        </span>
-                      </div>
+                      <>
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          color: '#ccc',
+                          marginBottom: '8px'
+                        }}>
+                          <span>🛡️ PROTECTION</span>
+                          <span style={{ color: '#4a9eff', fontWeight: 800, fontSize: '14px' }}>
+                            {getProtectionValue(item.effect)} PROT.
+                          </span>
+                        </div>
+                        <div style={{
+                          marginTop: '8px',
+                          padding: '8px',
+                          background: 'rgba(74, 158, 255, 0.1)',
+                          border: '1px solid rgba(74, 158, 255, 0.3)',
+                          borderRadius: '6px',
+                          fontSize: '11px',
+                          color: '#4a9eff',
+                          fontWeight: 600,
+                          textAlign: 'center'
+                        }}>
+                          ⏰ Lasts for 2 weeks
+                        </div>
+                      </>
                     )}
                     {item.type === 'weapon' && (
                       <div style={{

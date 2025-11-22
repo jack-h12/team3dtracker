@@ -15,11 +15,13 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { sendFriendRequest, getFriendRequests, acceptFriendRequest, rejectFriendRequest, getFriends, getUserProfile } from '@/lib/friends'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
-import { getDisplayName } from '@/lib/supabase'
+import { getDisplayName, supabase } from '@/lib/supabase'
+import { withRetry } from '@/lib/supabase-helpers'
 import { showModal } from '@/lib/modal'
+import { getAvatarImage } from '@/lib/utils'
 import type { FriendRequest, Profile } from '@/lib/supabase'
 
 interface FriendsProps {
@@ -32,31 +34,88 @@ export default function Friends({ userId }: FriendsProps) {
   const [allUsers, setAllUsers] = useState<Profile[]>([])
   const [selectedUserId, setSelectedUserId] = useState('')
   const [loading, setLoading] = useState(false)
+  const isLoadingRef = useRef(false)
+  const mountedRef = useRef(true)
+  const hasInitialDataRef = useRef(false)
 
-  useEffect(() => {
-    loadData()
-  }, [userId])
+  const loadData = useCallback(async (silent: boolean = false) => {
+    // Prevent duplicate calls
+    if (isLoadingRef.current) {
+      console.log('Friends: Already loading, skipping duplicate call')
+      return
+    }
 
-  const loadData = async () => {
-    setLoading(true)
+    if (!mountedRef.current) return
+
+    isLoadingRef.current = true
+    // Only show loading UI if we haven't loaded initial data yet and not silent
+    if (!silent && !hasInitialDataRef.current) {
+      setLoading(true)
+    }
     try {
       const [reqs, frs, users] = await Promise.all([
-        getFriendRequests(userId),
-        getFriends(userId),
-        getDailyLeaderboard(),
+        withRetry(() => getFriendRequests(userId), { maxRetries: 3, timeout: 15000 }),
+        withRetry(() => getFriends(userId), { maxRetries: 3, timeout: 15000 }),
+        withRetry(() => getDailyLeaderboard(), { maxRetries: 3, timeout: 15000 }),
       ])
-      setRequests(reqs.filter(r => r.status === 'pending'))
-      setFriends(frs)
-      setAllUsers(users.filter(u => u.id !== userId))
+      
+      if (mountedRef.current) {
+        setRequests(reqs.filter(r => r.status === 'pending'))
+        setFriends(frs)
+        setAllUsers(users.filter(u => u.id !== userId))
+        // Mark that we've loaded initial data
+        hasInitialDataRef.current = true
+      }
     } catch (err) {
       console.error('Error loading friends data:', err)
     } finally {
-      setLoading(false)
+      isLoadingRef.current = false
+      if (mountedRef.current) {
+        // Only clear loading state if we were showing it (not silent refresh)
+        if (!silent) {
+          setLoading(false)
+        }
+      }
     }
-  }
+  }, [userId])
 
-  const handleSendRequest = async () => {
-    if (!selectedUserId) return
+  useEffect(() => {
+    mountedRef.current = true
+    isLoadingRef.current = false
+
+    // Run on mount - fetch data when component first loads
+    loadData()
+
+    // Run whenever the tab becomes active again
+    // Silently refresh data in background without clearing UI
+    const handler = () => {
+      // Only reload if tab is visible (not hidden) and not already loading
+      if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
+        console.log('Friends: Tab became visible, silently refreshing data...')
+        // Reset loading flag to allow fresh load
+        isLoadingRef.current = false
+        // Wait a moment for browser to be ready
+        setTimeout(() => {
+          if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
+            // Pass silent=true to refresh without showing loading state
+            loadData(true)
+          }
+        }, 500)
+      }
+    }
+
+    // Listen for visibility changes (when user switches tabs)
+    document.addEventListener("visibilitychange", handler)
+
+    return () => {
+      mountedRef.current = false
+      document.removeEventListener("visibilitychange", handler)
+      isLoadingRef.current = false
+    }
+  }, [loadData])
+
+  const handleSendRequest = useCallback(async () => {
+    if (!selectedUserId || loading) return
 
     setLoading(true)
     try {
@@ -69,9 +128,11 @@ export default function Friends({ userId }: FriendsProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [selectedUserId, userId, loading, loadData])
 
-  const handleAccept = async (requestId: string) => {
+  const handleAccept = useCallback(async (requestId: string) => {
+    if (loading) return
+    
     setLoading(true)
     try {
       await acceptFriendRequest(requestId)
@@ -81,9 +142,11 @@ export default function Friends({ userId }: FriendsProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [loading, loadData])
 
-  const handleReject = async (requestId: string) => {
+  const handleReject = useCallback(async (requestId: string) => {
+    if (loading) return
+    
     setLoading(true)
     try {
       await rejectFriendRequest(requestId)
@@ -93,22 +156,8 @@ export default function Friends({ userId }: FriendsProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [loading, loadData])
 
-  // Get avatar image based on level
-  const getAvatarImage = (level: number): string => {
-    if (level === 0) return '/smeagol-level1.webp'
-    if (level === 1) return '/smeagol-level1.webp'
-    if (level === 2) return '/babythanos-level2.jpg'
-    if (level === 3) return '/boy thanos-level3.jpg'
-    if (level === 4) return '/young thanos-level4.jpg'
-    if (level === 5) return '/thanos one stone-level5.jpg'
-    if (level === 6) return '/thanos two stones-level6.avif'
-    if (level === 7) return '/thanos 3 stones-level7.jpg'
-    if (level === 8) return '/thanos 4 stones-level8.jpg'
-    if (level === 9) return '/thanos 5 stones-level9.jpg'
-    return '/goku thanos-level10.webp'
-  }
 
   const receivedRequests = requests.filter(r => r.receiver_id === userId)
   const sentRequests = requests.filter(r => r.sender_id === userId)

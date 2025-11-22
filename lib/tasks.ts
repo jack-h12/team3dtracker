@@ -9,8 +9,11 @@
  * - deleteTask: Removes a task
  * - shouldResetTasks: Checks if tasks should reset (5pm EST)
  * - resetDailyTasks: Resets all tasks for a user (called at 5pm EST)
+ * - shouldResetAvatar: Checks if avatar should reset (5pm EST)
+ * - resetAvatar: Resets avatar level to 0 (called at 5pm EST)
  * 
  * Task reset logic: Tasks reset daily at 5pm EST. The app checks this on load and when tasks are accessed.
+ * Avatar reset logic: Avatar resets to level 0 daily at 5pm EST, independently of task reset.
  */
 
 import { supabase } from './supabase'
@@ -101,7 +104,7 @@ export async function updateTask(taskId: string, updates: Partial<Task>): Promis
   return data as Task
 }
 
-export async function completeTask(taskId: string, userId: string): Promise<void> {
+export async function completeTask(taskId: string, userId: string, currentTasks?: Task[]): Promise<Profile> {
   // Get current profile to check daily completion counter
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
@@ -126,7 +129,7 @@ export async function completeTask(taskId: string, userId: string): Promise<void
 
   // If task is already completed, don't award gold/exp again
   if (typedTask.is_done) {
-    return // Task already completed, no reward
+    return typedProfile // Task already completed, no reward
   }
 
   // Check if user has already completed 10 tasks today (daily cap)
@@ -141,8 +144,15 @@ export async function completeTask(taskId: string, userId: string): Promise<void
   await updateTask(taskId, { is_done: true })
 
   // Calculate new daily level (0-10 based on completed tasks)
-  // Re-fetch tasks to get updated state
-  const tasks = await getTodayTasks(userId)
+  // Use provided tasks array if available, otherwise fetch
+  let tasks: Task[]
+  if (currentTasks) {
+    // Update the task in the provided array
+    tasks = currentTasks.map(t => t.id === taskId ? { ...t, is_done: true } : t)
+  } else {
+    // Fallback: fetch tasks if not provided
+    tasks = await getTodayTasks(userId)
+  }
   const completedCount = tasks.filter(t => t.is_done).length
   const newDailyLevel = Math.min(completedCount, 10)
 
@@ -156,25 +166,40 @@ export async function completeTask(taskId: string, userId: string): Promise<void
   const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
     user_id_param: userId,
     gold_increase: goldReward,
-    exp_increase: 1,
+    exp_increase: 5, // Award 5 EXP per task completed
     new_level: newDailyLevel,
     tasks_completed_today: newTasksCompletedToday
   })
 
+  let updatedProfile: Profile
+
   if (updateError) {
     // Fallback to direct update if function doesn't exist
     console.warn('Database function not available, using direct update:', updateError)
-    const { error: directUpdateError } = await ((supabase
+    const { data: updatedData, error: directUpdateError } = await ((supabase
       .from('profiles') as any)
       .update({
         avatar_level: newDailyLevel,
-        lifetime_exp: typedProfile.lifetime_exp + 1,
+        lifetime_exp: typedProfile.lifetime_exp + 5, // Award 5 EXP per task completed
         gold: typedProfile.gold + goldReward,
         tasks_completed_today: newTasksCompletedToday,
       })
-      .eq('id', userId))
+      .eq('id', userId)
+      .select()
+      .single())
     
     if (directUpdateError) throw directUpdateError
+    updatedProfile = updatedData as Profile
+  } else {
+    // Fetch updated profile after RPC call
+    const { data: updatedData, error: fetchError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+    
+    if (fetchError) throw fetchError
+    updatedProfile = updatedData as Profile
   }
 
   // Check if user completed all tasks (10 tasks total, all done) and award elite status if eligible
@@ -182,7 +207,16 @@ export async function completeTask(taskId: string, userId: string): Promise<void
     // Dynamically import to avoid circular dependency
     const { checkAndAwardEliteStatus } = await import('./elite')
     await checkAndAwardEliteStatus(userId)
+    // Re-fetch profile in case elite status was updated
+    const { data: eliteProfile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+    if (eliteProfile) updatedProfile = eliteProfile as Profile
   }
+
+  return updatedProfile
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
@@ -212,6 +246,42 @@ export async function updateTaskOrder(userId: string, taskOrders: { taskId: stri
       throw result.error
     }
   }
+}
+
+export function shouldResetAvatar(lastAvatarResetDate: string | null): boolean {
+  if (!lastAvatarResetDate) return false // Don't auto-reset if no last reset date
+  
+  const lastReset = new Date(lastAvatarResetDate)
+  const now = new Date()
+  const resetTime = getResetTimeToday()
+  
+  // Only reset if:
+  // 1. It's actually a new day (not the same day)
+  // 2. We've passed today's reset time (5pm EST)
+  // 3. The last reset was before today's reset time
+  const lastResetDay = new Date(lastReset).toDateString()
+  const today = now.toDateString()
+  const isNewDay = lastResetDay !== today
+  
+  // Additional check: make sure we're not resetting multiple times on the same day
+  const lastResetTime = lastReset.getTime()
+  const resetTimeMs = resetTime.getTime()
+  const nowMs = now.getTime()
+  
+  // Only reset if it's a new day AND we're past the reset time AND last reset was before today's reset time
+  return isNewDay && nowMs >= resetTimeMs && lastResetTime < resetTimeMs
+}
+
+export async function resetAvatar(userId: string): Promise<void> {
+  // Reset avatar_level to 0
+  const { error: profileError } = await ((supabase
+    .from('profiles') as any)
+    .update({ 
+      avatar_level: 0
+    })
+    .eq('id', userId))
+
+  if (profileError) throw profileError
 }
 
 export async function resetDailyTasks(userId: string): Promise<void> {

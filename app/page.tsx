@@ -14,7 +14,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getCurrentUser, getCurrentProfile, signOut } from '@/lib/auth'
 import { shouldResetTasks, resetDailyTasks } from '@/lib/tasks'
@@ -30,11 +30,12 @@ import Modal from '@/components/Modal'
 import { isAdmin } from '@/lib/admin'
 import { setModalStateSetter, getModalState, closeModal } from '@/lib/modal'
 import type { Profile } from '@/lib/supabase'
+import type { User } from '@supabase/supabase-js'
 
 type View = 'tasks' | 'leaderboard' | 'friends' | 'shop' | 'admin' | 'howtoplay'
 
 export default function Home() {
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [currentView, setCurrentView] = useState<View>('tasks')
@@ -46,62 +47,53 @@ export default function Home() {
     setModalStateSetter(setModalState)
   }, [])
 
+  // Function to initialize auth and load user data
+  const initAuth = async () => {
+    try {
+      // Check if Supabase URL is valid (not placeholder)
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+      
+      if (!supabaseUrl || supabaseUrl.includes('placeholder')) {
+        console.warn('Supabase not configured - showing auth screen')
+        console.warn('Make sure NEXT_PUBLIC_SUPABASE_URL is set in Vercel environment variables')
+        setLoading(false)
+        return
+      }
+      
+      // Get session - refresh it to ensure it's valid
+      const { data: { session }, error } = await supabase.auth.getSession()
+      
+      if (error) {
+        console.error('Error getting session:', error)
+        setLoading(false)
+        return
+      }
+      
+      if (session?.user) {
+        setUser(session.user)
+        // Load profile in background, don't block UI
+        try {
+          const userProfile = await getCurrentProfile()
+          if (userProfile) {
+            setProfile(userProfile)
+            const adminStatus = await isAdmin(session.user.id)
+            setUserIsAdmin(adminStatus)
+          }
+        } catch (profileError) {
+          console.error('Error loading profile:', profileError)
+        }
+      }
+      setLoading(false)
+    } catch (err) {
+      console.error('Error initializing auth:', err)
+      setLoading(false)
+    }
+  }
+
   useEffect(() => {
     let mounted = true
     
-    // Check for existing session first
-    const initAuth = async () => {
-      try {
-        // Check if Supabase URL is valid (not placeholder)
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-        
-        if (!supabaseUrl || supabaseUrl.includes('placeholder')) {
-          console.warn('Supabase not configured - showing auth screen')
-          console.warn('Make sure NEXT_PUBLIC_SUPABASE_URL is set in Vercel environment variables')
-          if (mounted) setLoading(false)
-          return
-        }
-        
-        // Get session - don't use timeout, let it fail naturally
-        // If it takes too long, the browser will handle it
-        const { data: { session }, error } = await supabase.auth.getSession()
-        
-        if (!mounted) return
-        
-        if (error) {
-          console.error('Error getting session:', error)
-          if (mounted) setLoading(false)
-          return
-        }
-        
-        if (session?.user) {
-          setUser(session.user)
-          // Load profile in background, don't block UI
-          getCurrentProfile()
-            .then((userProfile) => {
-              if (!mounted) return
-              if (userProfile) {
-                setProfile(userProfile)
-                isAdmin(session.user.id).then((adminStatus) => {
-                  if (mounted) setUserIsAdmin(adminStatus)
-                }).catch(() => {})
-              }
-            })
-            .catch((profileError) => {
-              console.error('Error loading profile:', profileError)
-            })
-            .finally(() => {
-              if (mounted) setLoading(false)
-            })
-        } else {
-          if (mounted) setLoading(false)
-        }
-      } catch (err) {
-        console.error('Error initializing auth:', err)
-        if (mounted) setLoading(false)
-      }
-    }
-    
+    // Initial auth check
     initAuth()
     
     // Listen for auth changes
@@ -127,13 +119,63 @@ export default function Home() {
       }
     })
 
+    // Handle visibility change - silently refresh session when tab becomes active
+    // Don't clear existing data, just refresh in background
+    const handleVisibilityChange = async () => {
+      if (!mounted || document.hidden) return
+      
+      console.log('Tab became visible - silently refreshing session...')
+      
+      // Tab became visible, refresh the session silently (don't clear UI)
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        if (!mounted) return
+        
+        if (error) {
+          console.error('Error refreshing session on visibility change:', error)
+          return
+        }
+        
+        if (session?.user) {
+          // Silently refresh user data when tab becomes active
+          // Always refresh to keep data up to date, React won't re-render if values are the same
+          setUser(session.user)
+          const userProfile = await getCurrentProfile()
+          if (userProfile && mounted) {
+            setProfile(userProfile)
+            const adminStatus = await isAdmin(session.user.id)
+            if (mounted) setUserIsAdmin(adminStatus)
+          }
+        } else {
+          // Session expired, clear state (this is expected behavior)
+          setUser(null)
+          setProfile(null)
+          setUserIsAdmin(false)
+        }
+      } catch (err) {
+        console.error('Error handling visibility change:', err)
+      }
+    }
+
+    const handleFocus = async () => {
+      if (!mounted) return
+      console.log('Window focused - refreshing session...')
+      await handleVisibilityChange()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleFocus)
+
     return () => {
       mounted = false
       subscription.unsubscribe()
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
     }
   }, [])
 
-  const loadProfile = async (userId: string) => {
+  const loadProfile = useCallback(async (userId: string) => {
     try {
       const userProfile = await getCurrentProfile()
       if (userProfile) {
@@ -143,9 +185,7 @@ export default function Home() {
         setUserIsAdmin(adminStatus)
         
         // If user is not admin but somehow on admin view, redirect to tasks
-        if (!adminStatus && currentView === 'admin') {
-          setCurrentView('tasks')
-        }
+        setCurrentView(prev => !adminStatus && prev === 'admin' ? 'tasks' : prev)
       }
       
       // Only check for daily reset on initial load, not every time profile is reloaded
@@ -154,18 +194,18 @@ export default function Home() {
     } catch (err) {
       console.error('Error loading profile:', err)
     }
-  }
+  }, [])
 
-  const handleAuthSuccess = async () => {
+  const handleAuthSuccess = useCallback(async () => {
     // Refresh the session and reload profile
     const { data: { session } } = await supabase.auth.getSession()
     if (session?.user) {
       setUser(session.user)
       await loadProfile(session.user.id)
     }
-  }
+  }, [loadProfile])
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     try {
       await signOut()
       setUser(null)
@@ -173,19 +213,23 @@ export default function Home() {
     } catch (err) {
       console.error('Error signing out:', err)
     }
-  }
+  }, [])
 
-  const handleTaskComplete = async () => {
+  const handleTaskComplete = useCallback(async (updatedProfile?: Profile) => {
+    if (updatedProfile) {
+      // Use the provided profile to avoid re-fetching
+      setProfile(updatedProfile)
+    } else if (user) {
+      // Fallback: fetch profile if not provided
+      await loadProfile(user.id)
+    }
+  }, [user, loadProfile])
+
+  const handlePurchase = useCallback(async () => {
     if (user) {
       await loadProfile(user.id)
     }
-  }
-
-  const handlePurchase = async () => {
-    if (user) {
-      await loadProfile(user.id)
-    }
-  }
+  }, [user, loadProfile])
 
   if (loading) {
     return (

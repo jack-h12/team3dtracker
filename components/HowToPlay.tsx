@@ -49,7 +49,7 @@ export default function HowToPlay() {
               <strong style={{ color: '#fff', fontWeight: 700 }}>• Daily reset at 5pm EST</strong> - All tasks reset automatically, so stay consistent!
             </p>
             <p style={{ margin: 0 }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>• Each completed task</strong> gives you +1 lifetime EXP and increases your daily level
+              <strong style={{ color: '#fff', fontWeight: 700 }}>• Each completed task</strong> gives you +5 lifetime EXP and increases your daily level
             </p>
           </div>
         </div>
@@ -110,7 +110,7 @@ export default function HowToPlay() {
               <strong style={{ color: '#fff', fontWeight: 700 }}>⚔️ WEAPONS</strong> - Attack other players to reduce their lifetime EXP. Damage: Wooden Sword (10), Iron Sword (25), Diamond Sword (50)
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>🛡️ ARMOUR</strong> - Protects you from attacks. Protection: Leather (5 PROT.), Iron (15 PROT.), Diamond (30 PROT.). Armour stacks!
+              <strong style={{ color: '#fff', fontWeight: 700 }}>🛡️ ARMOUR</strong> - Protects you from attacks. Protection: Leather (5 PROT.), Iron (15 PROT.), Diamond (30 PROT.). Only the highest protection armour counts - doesn't stack! <strong style={{ color: '#ff4444', fontWeight: 700 }}>Armour expires after 2 weeks</strong> - hover over armour to see time remaining!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>🧪 POTIONS</strong> - Give you temporary immunity from attacks (24h or 48h)
@@ -206,13 +206,16 @@ export default function HowToPlay() {
           </h3>
           <div style={{ color: '#ccc', fontSize: '15px', lineHeight: '1.8', fontWeight: 500 }}>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>• Attack Formula:</strong> Weapon Damage - Target's Total Armour Protection = Actual Damage
+              <strong style={{ color: '#fff', fontWeight: 700 }}>• Attack Formula:</strong> Weapon Damage - Target's Highest Armour Protection = Actual Damage
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>• Example:</strong> Diamond Sword (50 damage) vs Leather Armour (5 PROT.) = 45 EXP lost
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>• Armour stacks!</strong> If you have multiple armour pieces, their protection values add up
+              <strong style={{ color: '#fff', fontWeight: 700 }}>• Armour doesn't stack!</strong> Only the highest protection armour piece counts. Multiple armour pieces don't add together
+            </p>
+            <p style={{ margin: '0 0 12px 0' }}>
+              <strong style={{ color: '#fff', fontWeight: 700 }}>• Armour expiration:</strong> Armour expires after 2 weeks from purchase. Expired armour provides no protection. Hover over armour icons to see time remaining!
             </p>
             <p style={{ margin: 0 }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>• Minimum damage:</strong> Even with strong armour, you'll always take at least 0 damage (can't go negative)
@@ -244,16 +247,19 @@ export default function HowToPlay() {
               <strong style={{ color: '#fff', fontWeight: 700 }}>1. Complete all 10 tasks</strong> - Be one of the first 3 to unlock elite status and buy exclusive items!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>2. Stack armour</strong> - Multiple armour pieces provide better protection
+              <strong style={{ color: '#fff', fontWeight: 700 }}>2. Choose the best armour</strong> - Only the highest protection armour piece counts, so pick the strongest one! Remember armour expires after 2 weeks!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>3. Use potions strategically</strong> - Activate immunity before big battles
+              <strong style={{ color: '#fff', fontWeight: 700 }}>3. Check expiration dates</strong> - Hover over armour and potion icons to see how much time remains before they expire
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>4. Check leaderboards daily</strong> - See who's climbing the ranks
+              <strong style={{ color: '#fff', fontWeight: 700 }}>4. Use potions strategically</strong> - Activate immunity before big battles. Potions last 24h or 48h!
+            </p>
+            <p style={{ margin: '0 0 12px 0' }}>
+              <strong style={{ color: '#fff', fontWeight: 700 }}>5. Check leaderboards daily</strong> - See who's climbing the ranks
             </p>
             <p style={{ margin: 0 }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>5. Consistency is key</strong> - Complete tasks every day to build your lifetime EXP
+              <strong style={{ color: '#fff', fontWeight: 700 }}>6. Consistency is key</strong> - Complete tasks every day to build your lifetime EXP
             </p>
           </div>
         </div>

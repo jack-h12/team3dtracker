@@ -11,10 +11,11 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { isAdmin, promoteToAdmin, demoteFromAdmin, getAllUsers } from '@/lib/admin'
 import { getDisplayName } from '@/lib/supabase'
 import { showModal, showConfirm } from '@/lib/modal'
+import { getAvatarImage } from '@/lib/utils'
 import type { Profile } from '@/lib/supabase'
 
 interface AdminProps {
@@ -28,11 +29,7 @@ export default function Admin({ userId }: AdminProps) {
   const [actionLoading, setActionLoading] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState('')
 
-  useEffect(() => {
-    checkAdminAndLoad()
-  }, [userId])
-
-  const checkAdminAndLoad = async () => {
+  const checkAdminAndLoad = useCallback(async () => {
     setLoading(true)
     try {
       const adminStatus = await isAdmin(userId)
@@ -47,9 +44,15 @@ export default function Admin({ userId }: AdminProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [userId])
 
-  const handlePromote = async (targetUserId: string) => {
+  useEffect(() => {
+    checkAdminAndLoad()
+  }, [checkAdminAndLoad])
+
+  const handlePromote = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    
     const confirmed = await showConfirm('Promote to Admin', 'Promote this user to admin?')
     if (!confirmed) return
 
@@ -63,9 +66,11 @@ export default function Admin({ userId }: AdminProps) {
     } finally {
       setActionLoading(false)
     }
-  }
+  }, [userId, actionLoading, checkAdminAndLoad])
 
-  const handleDemote = async (targetUserId: string) => {
+  const handleDemote = useCallback(async (targetUserId: string) => {
+    if (actionLoading) return
+    
     const confirmed = await showConfirm('Demote from Admin', 'Remove admin status from this user?')
     if (!confirmed) return
 
@@ -79,22 +84,7 @@ export default function Admin({ userId }: AdminProps) {
     } finally {
       setActionLoading(false)
     }
-  }
-
-  // Get avatar image based on level (same as Avatar component)
-  const getAvatarImage = (level: number): string => {
-    if (level === 0) return '/smeagol-level1.webp'
-    if (level === 1) return '/smeagol-level1.webp'
-    if (level === 2) return '/babythanos-level2.jpg'
-    if (level === 3) return '/boy thanos-level3.jpg'
-    if (level === 4) return '/young thanos-level4.jpg'
-    if (level === 5) return '/thanos one stone-level5.jpg'
-    if (level === 6) return '/thanos two stones-level6.avif'
-    if (level === 7) return '/thanos 3 stones-level7.jpg'
-    if (level === 8) return '/thanos 4 stones-level8.jpg'
-    if (level === 9) return '/thanos 5 stones-level9.jpg'
-    return '/goku thanos-level10.webp'
-  }
+  }, [userId, actionLoading, checkAdminAndLoad])
 
   if (loading) {
     return (

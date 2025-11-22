@@ -13,11 +13,13 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { getDailyLeaderboard, getLifetimeLeaderboard, getUserTasks } from '@/lib/leaderboard'
 import { getUserProfile } from '@/lib/friends'
-import { getDisplayName } from '@/lib/supabase'
+import { getDisplayName, supabase } from '@/lib/supabase'
 import { getUserInventory, getWeaponDamage, getProtectionValue } from '@/lib/shop'
+import { withRetry } from '@/lib/supabase-helpers'
+import { getAvatarImage, getItemImage, getPotionTimeRemaining, getArmourTimeRemaining } from '@/lib/utils'
 import type { ShopItem, UserInventory } from '@/lib/supabase'
 import type { Profile, Task } from '@/lib/supabase'
 
@@ -28,29 +30,141 @@ export default function Leaderboard() {
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null)
   const [userTasks, setUserTasks] = useState<Task[]>([])
   const [userInventory, setUserInventory] = useState<(UserInventory & { item: ShopItem })[]>([])
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    loadLeaderboards()
-  }, [])
-
-  const loadLeaderboards = async () => {
-    setLoading(true)
+  // Initialize loading to true - component starts in loading state until data is fetched
+  // This ensures the UI always renders (never returns null) and shows loading indicator
+  const [loading, setLoading] = useState(true)
+  const isLoadingRef = useRef(false)
+  const mountedRef = useRef(true)
+  const hasInitialDataRef = useRef(false)
+  // State for hover tooltips
+  const [hoveredPotionUserId, setHoveredPotionUserId] = useState<string | null>(null)
+  const [hoveredArmourUserId, setHoveredArmourUserId] = useState<string | null>(null)
+  const [userInventories, setUserInventories] = useState<Record<string, (UserInventory & { item: ShopItem })[]>>({})
+  
+  // Helper to load user inventory on hover for armour tooltip
+  const loadUserInventoryOnHover = useCallback(async (userId: string) => {
+    if (userInventories[userId]) return // Already loaded
+    
     try {
+      const inventory = await getUserInventory(userId)
+      if (mountedRef.current) {
+        setUserInventories(prev => ({ ...prev, [userId]: inventory }))
+      }
+    } catch (err) {
+      console.error('Error loading user inventory for hover:', err)
+    }
+  }, [userInventories])
+
+  const loadLeaderboards = useCallback(async (silent: boolean = false) => {
+    // Prevent duplicate calls - skip if already loading
+    if (isLoadingRef.current) {
+      console.log('Leaderboard: Already loading, skipping duplicate call')
+      return
+    }
+    
+    if (!mountedRef.current) return
+    
+    // Set isLoading to true BEFORE starting fetch - prevents duplicate calls
+    isLoadingRef.current = true
+    // Only show loading UI if we haven't loaded initial data yet and not silent
+    if (!silent && !hasInitialDataRef.current) {
+      setLoading(true)
+    }
+    try {
+      console.log('Loading leaderboards...')
+      
+      // Fetch with retry and timeout handling
+      // Use longer timeout and more retries for tab visibility scenarios
       const [daily, lifetime] = await Promise.all([
-        getDailyLeaderboard(),
-        getLifetimeLeaderboard(),
+        withRetry(() => getDailyLeaderboard(), { maxRetries: 3, timeout: 15000 }),
+        withRetry(() => getLifetimeLeaderboard(), { maxRetries: 3, timeout: 15000 }),
       ])
-      setDailyUsers(daily)
-      setLifetimeUsers(lifetime)
+      
+      console.log('Leaderboard data fetched:', { daily: daily.length, lifetime: lifetime.length })
+      
+      // Only update if component is still mounted
+      if (mountedRef.current) {
+        setDailyUsers(daily)
+        setLifetimeUsers(lifetime)
+        // Mark that we've loaded initial data
+        hasInitialDataRef.current = true
+        console.log('Leaderboard state updated successfully')
+      }
     } catch (err) {
       console.error('Error loading leaderboards:', err)
     } finally {
-      setLoading(false)
+      // Always reset isLoading and loading state to false, even on error
+      // CRITICAL: isLoading must ALWAYS be reset to false, otherwise component gets stuck
+      isLoadingRef.current = false
+      if (mountedRef.current) {
+        // Only clear loading state if we were showing it (not silent refresh)
+        if (!silent) {
+          setLoading(false)
+        }
+      }
     }
-  }
+  }, [])
+  
+  // Preload inventories for top users in background (for armour display)
+  useEffect(() => {
+    if (!hasInitialDataRef.current) return
+    
+    const currentUsers = activeTab === 'daily' ? dailyUsers : lifetimeUsers
+    const topUsers = currentUsers.slice(0, 20) // Limit to top 20 to avoid too many API calls
+    
+    topUsers.forEach(user => {
+      if (!userInventories[user.id]) {
+        getUserInventory(user.id)
+          .then(inventory => {
+            if (mountedRef.current) {
+              setUserInventories(prev => ({ ...prev, [user.id]: inventory }))
+            }
+          })
+          .catch(() => {
+            // Silently fail - inventory will load on hover if needed
+          })
+      }
+    })
+  }, [activeTab, dailyUsers, lifetimeUsers, userInventories])
 
-  const handleViewProfile = async (userId: string) => {
+  useEffect(() => {
+    mountedRef.current = true
+    isLoadingRef.current = false
+
+    // Run on mount - fetch data when component first loads
+    loadLeaderboards()
+
+    // Run whenever the tab becomes active again
+    // Silently refresh data in background without clearing UI
+    const handler = () => {
+      // Only reload if tab is visible (not hidden) and not already loading
+      if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
+        console.log('Leaderboard: Tab became visible, silently refreshing data...')
+        // Reset loading flag to allow fresh load
+        isLoadingRef.current = false
+        // Wait a moment for browser to be ready
+        setTimeout(() => {
+          if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
+            // Pass silent=true to refresh without showing loading state
+            loadLeaderboards(true)
+          }
+        }, 500)
+      }
+    }
+
+    // Listen for visibility changes (when user switches tabs)
+    document.addEventListener("visibilitychange", handler)
+
+    return () => {
+      mountedRef.current = false
+      document.removeEventListener("visibilitychange", handler)
+      isLoadingRef.current = false
+    }
+  }, [loadLeaderboards])
+
+  const handleViewProfile = useCallback(async (userId: string) => {
+    if (loading) return
+    
     setLoading(true)
     try {
       const [user, tasks, inventory] = await Promise.all([
@@ -58,85 +172,38 @@ export default function Leaderboard() {
         getUserTasks(userId),
         getUserInventory(userId),
       ])
-      setUserTasks(tasks)
-      setUserInventory(inventory)
-      setSelectedUser(user)
+      if (mountedRef.current) {
+        setUserTasks(tasks)
+        setUserInventory(inventory)
+        setSelectedUser(user)
+      }
     } catch (err) {
       console.error('Error loading user profile:', err)
     } finally {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [loading])
 
-  const getItemImage = (item: ShopItem): string => {
-    if (item.type === 'weapon') {
-      const name = item.name.toLowerCase()
-      if (name.includes('wooden')) return '/Wooden Sword.png'
-      if (name.includes('iron')) return '/iron sword.webp'
-      if (name.includes('diamond')) return '/diamond sword.webp'
-      if (item.cost <= 50) return '/Wooden Sword.png'
-      if (item.cost <= 150) return '/iron sword.webp'
-      return '/diamond sword.webp'
-    } else if (item.type === 'armour') {
-      const name = item.name.toLowerCase()
-      if (name.includes('leather')) return '/leather armour.png'
-      if (name.includes('iron')) return '/iron armour.png'
-      if (name.includes('diamond') || name.includes('steel')) return '/diamond armour.webp'
-      if (item.cost <= 100) return '/leather armour.png'
-      if (item.cost <= 250) return '/iron armour.png'
-      return '/diamond armour.webp'
-    }
-    return ''
-  }
 
-  const getPotionTimeRemaining = (expiresAt: string | null | undefined): string => {
-    if (!expiresAt) return ''
-    const expires = new Date(expiresAt)
-    const now = new Date()
-    const diff = expires.getTime() - now.getTime()
-    
-    if (diff <= 0) return 'Expired'
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes}m remaining`
-    }
-    return `${minutes}m remaining`
-  }
-
-  // Get avatar image based on level (same as Avatar component)
-  const getAvatarImage = (level: number): string => {
-    if (level === 0) return '/smeagol-level1.webp'
-    if (level === 1) return '/smeagol-level1.webp'
-    if (level === 2) return '/babythanos-level2.jpg'
-    if (level === 3) return '/boy thanos-level3.jpg'
-    if (level === 4) return '/young thanos-level4.jpg'
-    if (level === 5) return '/thanos one stone-level5.jpg'
-    if (level === 6) return '/thanos two stones-level6.avif'
-    if (level === 7) return '/thanos 3 stones-level7.jpg'
-    if (level === 8) return '/thanos 4 stones-level8.jpg'
-    if (level === 9) return '/thanos 5 stones-level9.jpg'
-    return '/goku thanos-level10.webp'
-  }
-
-  const getRankMedal = (rank: number) => {
+  const getRankMedal = useCallback((rank: number) => {
     if (rank === 0) return '🥇'
     if (rank === 1) return '🥈'
     if (rank === 2) return '🥉'
     return null
-  }
+  }, [])
 
-  const getRankColor = (rank: number) => {
+  const getRankColor = useCallback((rank: number) => {
     if (rank === 0) return 'linear-gradient(135deg, #ffd700 0%, #ffed4e 100%)'
     if (rank === 1) return 'linear-gradient(135deg, #c0c0c0 0%, #e8e8e8 100%)'
     if (rank === 2) return 'linear-gradient(135deg, #cd7f32 0%, #e6a857 100%)'
     return 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)'
-  }
+  }, [])
 
-  const currentUsers = activeTab === 'daily' ? dailyUsers : lifetimeUsers
-  const sortKey = activeTab === 'daily' ? 'avatar_level' : 'lifetime_exp'
+  const currentUsers = useMemo(() => {
+    return activeTab === 'daily' ? dailyUsers : lifetimeUsers
+  }, [activeTab, dailyUsers, lifetimeUsers])
 
   return (
     <div>
@@ -254,17 +321,21 @@ export default function Leaderboard() {
                   const isPotionActive = selectedUser.potion_immunity_expires 
                     ? new Date(selectedUser.potion_immunity_expires) > new Date()
                     : false
+                  const isHoveringPotion = hoveredPotionUserId === selectedUser.id
+                  const potionTimeRemaining = getPotionTimeRemaining(selectedUser.potion_immunity_expires)
+                  
                   return isPotionActive ? (
                     <div
                       style={{
                         position: 'absolute',
-                        top: '-10px',
+                        top: '-24px',
                         left: '50%',
                         transform: 'translateX(-50%)',
                         zIndex: 3,
                         cursor: 'pointer'
                       }}
-                      title={getPotionTimeRemaining(selectedUser.potion_immunity_expires)}
+                      onMouseEnter={() => setHoveredPotionUserId(selectedUser.id)}
+                      onMouseLeave={() => setHoveredPotionUserId(null)}
                     >
                       <div
                         style={{
@@ -278,10 +349,55 @@ export default function Leaderboard() {
                           justifyContent: 'center',
                           fontSize: '20px',
                           boxShadow: '0 4px 15px rgba(76, 175, 80, 0.6)',
-                          filter: 'drop-shadow(0 2px 8px rgba(76, 175, 80, 0.8))'
+                          filter: 'drop-shadow(0 2px 8px rgba(76, 175, 80, 0.8))',
+                          position: 'relative'
                         }}
                       >
                         🧪
+                        {/* Tooltip on hover */}
+                        {isHoveringPotion && potionTimeRemaining && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              bottom: '100%',
+                              left: '50%',
+                              transform: 'translateX(-50%)',
+                              marginBottom: '8px',
+                              padding: '8px 12px',
+                              background: 'rgba(0, 0, 0, 0.95)',
+                              color: '#4caf50',
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              borderRadius: '8px',
+                              whiteSpace: 'nowrap',
+                              border: '1px solid #4caf50',
+                              boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)',
+                              zIndex: 10,
+                              animation: 'fadeIn 0.2s ease-out'
+                            }}
+                          >
+                            {potionTimeRemaining}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: '100%',
+                                left: '50%',
+                                transform: 'translateX(-50%)',
+                                width: 0,
+                                height: 0,
+                                borderLeft: '6px solid transparent',
+                                borderRight: '6px solid transparent',
+                                borderTop: '6px solid #4caf50'
+                              }}
+                            />
+                            <style>{`
+                              @keyframes fadeIn {
+                                from { opacity: 0; transform: translateX(-50%) translateY(5px); }
+                                to { opacity: 1; transform: translateX(-50%) translateY(0); }
+                              }
+                            `}</style>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : null
@@ -334,31 +450,93 @@ export default function Leaderboard() {
                 
                 {/* Equipped Armor - Bottom Right (overlapping avatar image) */}
                 {(() => {
-                  const armors = userInventory.filter(inv => inv.item.type === 'armour')
-                  const topArmor = armors.length > 0 ? armors.reduce((best, current) => {
+                  const now = new Date()
+                  const validArmors = userInventory.filter(inv => {
+                    if (inv.item.type !== 'armour') return false
+                    if (inv.expires_at) {
+                      const expirationDate = new Date(inv.expires_at)
+                      return expirationDate > now
+                    }
+                    return true
+                  })
+                  const topArmor = validArmors.length > 0 ? validArmors.reduce((best, current) => {
                     const bestProtection = getProtectionValue(best.item.effect)
                     const currentProtection = getProtectionValue(current.item.effect)
                     return currentProtection > bestProtection ? current : best
                   }) : null
+                  const isHoveringArmour = hoveredArmourUserId === selectedUser.id
+                  const armourTimeRemaining = topArmor?.expires_at ? getArmourTimeRemaining(topArmor.expires_at) : null
+                  
                   return topArmor ? (
-                    <img
-                      src={getItemImage(topArmor.item)}
-                      alt={topArmor.item.name}
+                    <div
                       style={{
                         position: 'absolute',
                         bottom: '8px',
                         right: '8px',
-                        width: '35px',
-                        height: '35px',
-                        objectFit: 'contain',
-                        filter: 'drop-shadow(0 2px 8px rgba(74, 158, 255, 0.6))',
                         zIndex: 2,
-                        background: 'rgba(0, 0, 0, 0.7)',
-                        borderRadius: '8px',
-                        padding: '3px',
-                        border: '2px solid #4a9eff'
-                    }}
-                    />
+                        cursor: armourTimeRemaining ? 'pointer' : 'default'
+                      }}
+                      onMouseEnter={() => setHoveredArmourUserId(selectedUser.id)}
+                      onMouseLeave={() => setHoveredArmourUserId(null)}
+                    >
+                      <img
+                        src={getItemImage(topArmor.item)}
+                        alt={topArmor.item.name}
+                        style={{
+                          width: '35px',
+                          height: '35px',
+                          objectFit: 'contain',
+                          filter: 'drop-shadow(0 2px 8px rgba(74, 158, 255, 0.6))',
+                          background: 'rgba(0, 0, 0, 0.7)',
+                          borderRadius: '8px',
+                          padding: '3px',
+                          border: '2px solid #4a9eff',
+                          position: 'relative'
+                        }}
+                      />
+                      {/* Tooltip on hover */}
+                      {isHoveringArmour && armourTimeRemaining && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            right: '0',
+                            marginBottom: '8px',
+                            padding: '8px 12px',
+                            background: 'rgba(0, 0, 0, 0.95)',
+                            color: '#4a9eff',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            borderRadius: '8px',
+                            whiteSpace: 'nowrap',
+                            border: '1px solid #4a9eff',
+                            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)',
+                            zIndex: 10,
+                            animation: 'fadeIn 0.2s ease-out'
+                          }}
+                        >
+                          {armourTimeRemaining}
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: '100%',
+                              right: '12px',
+                              width: 0,
+                              height: 0,
+                              borderLeft: '6px solid transparent',
+                              borderRight: '6px solid transparent',
+                              borderTop: '6px solid #4a9eff'
+                            }}
+                          />
+                          <style>{`
+                            @keyframes fadeIn {
+                              from { opacity: 0; transform: translateY(5px); }
+                              to { opacity: 1; transform: translateY(0); }
+                            }
+                          `}</style>
+                        </div>
+                      )}
+                    </div>
                   ) : null
                 })()}
               </div>
@@ -535,6 +713,8 @@ export default function Leaderboard() {
         </div>
       ) : (
         <div>
+          {/* Always render the container - never return null based on empty data */}
+          {/* Show loading indicator while fetching, then show content or empty state */}
           {loading ? (
             <div style={{ textAlign: 'center', padding: '60px 20px' }}>
               <div style={{
@@ -616,18 +796,205 @@ export default function Leaderboard() {
                     </div>
                     
                     {/* Avatar */}
-                    <img
-                      src={getAvatarImage(user.avatar_level)}
-                      alt={`${getDisplayName(user)} avatar`}
-                      style={{
-                        width: '70px',
-                        height: '70px',
-                        objectFit: 'cover',
-                        borderRadius: '12px',
-                        border: '2px solid rgba(255, 107, 53, 0.5)',
-                        boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)'
-                      }}
-                    />
+                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                      {/* Potion Effect - Top Center */}
+                      {(() => {
+                        const isPotionActive = user.potion_immunity_expires 
+                          ? new Date(user.potion_immunity_expires) > new Date()
+                          : false
+                        const isHoveringPotion = hoveredPotionUserId === user.id
+                        const potionTimeRemaining = getPotionTimeRemaining(user.potion_immunity_expires)
+                        
+                        return isPotionActive ? (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: '-12px',
+                              left: '50%',
+                              transform: 'translateX(-50%)',
+                              zIndex: 3,
+                              cursor: 'pointer'
+                            }}
+                            onMouseEnter={() => setHoveredPotionUserId(user.id)}
+                            onMouseLeave={() => setHoveredPotionUserId(null)}
+                          >
+                            <div
+                              style={{
+                                background: 'linear-gradient(135deg, #2d5a27 0%, #1a3316 100%)',
+                                border: '2px solid #4caf50',
+                                borderRadius: '50%',
+                                width: '28px',
+                                height: '28px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '16px',
+                                boxShadow: '0 4px 15px rgba(76, 175, 80, 0.6)',
+                                filter: 'drop-shadow(0 2px 8px rgba(76, 175, 80, 0.8))',
+                                position: 'relative'
+                              }}
+                            >
+                              🧪
+                              {/* Tooltip on hover */}
+                              {isHoveringPotion && potionTimeRemaining && (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    bottom: '100%',
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    marginBottom: '8px',
+                                    padding: '8px 12px',
+                                    background: 'rgba(0, 0, 0, 0.95)',
+                                    color: '#4caf50',
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    borderRadius: '8px',
+                                    whiteSpace: 'nowrap',
+                                    border: '1px solid #4caf50',
+                                    boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)',
+                                    zIndex: 10,
+                                    animation: 'fadeIn 0.2s ease-out'
+                                  }}
+                                >
+                                  {potionTimeRemaining}
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      top: '100%',
+                                      left: '50%',
+                                      transform: 'translateX(-50%)',
+                                      width: 0,
+                                      height: 0,
+                                      borderLeft: '6px solid transparent',
+                                      borderRight: '6px solid transparent',
+                                      borderTop: '6px solid #4caf50'
+                                    }}
+                                  />
+                                  <style>{`
+                                    @keyframes fadeIn {
+                                      from { opacity: 0; transform: translateX(-50%) translateY(5px); }
+                                      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+                                    }
+                                  `}</style>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : null
+                      })()}
+                      
+                      {/* Armour Effect - Bottom Right (will show after avatar is loaded) */}
+                      {(() => {
+                        const inventory = userInventories[user.id] || []
+                        const now = new Date()
+                        const validArmors = inventory.filter(inv => {
+                          if (inv.item.type !== 'armour') return false
+                          if (inv.expires_at) {
+                            const expirationDate = new Date(inv.expires_at)
+                            return expirationDate > now
+                          }
+                          return true
+                        })
+                        const topArmor = validArmors.length > 0 ? validArmors.reduce((best, current) => {
+                          const bestProtection = getProtectionValue(best.item.effect)
+                          const currentProtection = getProtectionValue(current.item.effect)
+                          return currentProtection > bestProtection ? current : best
+                        }) : null
+                        const isHoveringArmour = hoveredArmourUserId === user.id
+                        const armourTimeRemaining = topArmor?.expires_at ? getArmourTimeRemaining(topArmor.expires_at) : null
+                        
+                        return topArmor ? (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              bottom: '-8px',
+                              right: '-8px',
+                              zIndex: 3,
+                              cursor: armourTimeRemaining ? 'pointer' : 'default'
+                            }}
+                            onMouseEnter={() => {
+                              setHoveredArmourUserId(user.id)
+                              loadUserInventoryOnHover(user.id)
+                            }}
+                            onMouseLeave={() => setHoveredArmourUserId(null)}
+                          >
+                            <img
+                              src={getItemImage(topArmor.item)}
+                              alt={topArmor.item.name}
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                objectFit: 'contain',
+                                filter: 'drop-shadow(0 2px 8px rgba(74, 158, 255, 0.6))',
+                                background: 'rgba(0, 0, 0, 0.7)',
+                                borderRadius: '8px',
+                                padding: '3px',
+                                border: '2px solid #4a9eff',
+                                position: 'relative'
+                              }}
+                            />
+                            {/* Tooltip on hover */}
+                            {isHoveringArmour && armourTimeRemaining && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  bottom: '100%',
+                                  right: '0',
+                                  marginBottom: '8px',
+                                  padding: '8px 12px',
+                                  background: 'rgba(0, 0, 0, 0.95)',
+                                  color: '#4a9eff',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  borderRadius: '8px',
+                                  whiteSpace: 'nowrap',
+                                  border: '1px solid #4a9eff',
+                                  boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)',
+                                  zIndex: 10,
+                                  animation: 'fadeIn 0.2s ease-out'
+                                }}
+                              >
+                                {armourTimeRemaining}
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: '100%',
+                                    right: '12px',
+                                    width: 0,
+                                    height: 0,
+                                    borderLeft: '6px solid transparent',
+                                    borderRight: '6px solid transparent',
+                                    borderTop: '6px solid #4a9eff'
+                                  }}
+                                />
+                                <style>{`
+                                  @keyframes fadeIn {
+                                    from { opacity: 0; transform: translateY(5px); }
+                                    to { opacity: 1; transform: translateY(0); }
+                                  }
+                                `}</style>
+                              </div>
+                            )}
+                          </div>
+                        ) : null
+                      })()}
+                      
+                      <img
+                        src={getAvatarImage(user.avatar_level)}
+                        alt={`${getDisplayName(user)} avatar`}
+                        style={{
+                          width: '70px',
+                          height: '70px',
+                          objectFit: 'cover',
+                          borderRadius: '12px',
+                          border: '2px solid rgba(255, 107, 53, 0.5)',
+                          boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
+                          position: 'relative',
+                          zIndex: 1
+                        }}
+                      />
+                    </div>
                     
                     {/* User Info */}
                     <div style={{ flex: 1 }}>
