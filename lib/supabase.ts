@@ -78,9 +78,6 @@ export const supabase = (() => {
       detectSessionInUrl: typeof window !== 'undefined',
       storage: typeof window !== 'undefined' ? window.localStorage : undefined,
       flowType: 'pkce'
-    },
-    db: {
-      schema: 'public'
     }
   })
 
