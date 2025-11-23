@@ -15,7 +15,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase, resetSupabaseClient } from '@/lib/supabase'
+import { supabase, resetSupabaseClient, forceResetSupabaseClient } from '@/lib/supabase'
 import { getCurrentUser, getCurrentProfile, signOut } from '@/lib/auth'
 import { shouldResetTasks, resetDailyTasks } from '@/lib/tasks'
 import { refreshSession } from '@/lib/supabase-helpers'
@@ -54,11 +54,53 @@ export default function Home() {
       // Note: process.env.NEXT_PUBLIC_* vars are replaced at build time by Next.js
       // They're available in both client and server, but we check here for safety
       
-      // Get session - refresh it to ensure it's valid
-      const { data: { session }, error } = await supabase.auth.getSession()
+      // Get session with timeout to detect hanging requests
+      let session: any = null
+      let sessionError: any = null
       
-      if (error) {
-        console.error('Error getting session:', error)
+      try {
+        const result = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<{ data: { session: null }, error: { message: 'Timeout' } }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null }, error: { message: 'Timeout' } }), 5000)
+          )
+        ]) as { data: { session: any }, error: any }
+        
+        session = result.data?.session
+        sessionError = result.error
+      } catch (err: any) {
+        console.error('Session check timed out or failed:', err)
+        // If session check hangs, clear stale data and try once more
+        if (err?.message === 'Timeout' || err?.message?.includes('timeout')) {
+          console.warn('Session check timed out - clearing stale data and retrying...')
+          forceResetSupabaseClient()
+          
+          // Wait a moment, then try once more
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          try {
+            const retryResult = await Promise.race([
+              supabase.auth.getSession(),
+              new Promise<{ data: { session: null }, error: { message: 'Timeout' } }>((resolve) =>
+                setTimeout(() => resolve({ data: { session: null }, error: { message: 'Timeout' } }), 5000)
+              )
+            ]) as { data: { session: any }, error: any }
+            session = retryResult.data?.session
+            sessionError = retryResult.error
+          } catch (retryErr) {
+            console.error('Retry also failed - forcing page reload')
+            // If retry also fails, force a hard reload to clear everything
+            if (typeof window !== 'undefined') {
+              window.location.reload()
+            }
+            return
+          }
+        } else {
+          sessionError = err
+        }
+      }
+      
+      if (sessionError) {
+        console.error('Error getting session:', sessionError)
         setLoading(false)
         return
       }
@@ -117,9 +159,9 @@ export default function Home() {
     const handleVisibilityChange = async () => {
       if (!mounted || document.hidden) return
       
-      // Reset client and wait for network to be ready
-      resetSupabaseClient()
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Force reset to clear any stale data
+      forceResetSupabaseClient()
+      await new Promise(resolve => setTimeout(resolve, 2000))
       
       if (!mounted || document.hidden) return
       
@@ -132,17 +174,24 @@ export default function Home() {
       try {
         const { data: { session }, error } = await Promise.race([
           supabase.auth.getSession(),
-          new Promise<{ data: { session: null }, error: null }>((resolve) =>
-            setTimeout(() => resolve({ data: { session: null }, error: null }), 3000)
+          new Promise<{ data: { session: null }, error: { message: 'Timeout' } }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null }, error: { message: 'Timeout' } }), 5000)
           )
         ]) as { data: { session: any }, error: any }
         
         if (!mounted) return
         
         if (error) {
-          // Error getting session - might be network issue, but don't clear user state
-          // The session might still be valid, just network isn't ready
-          console.warn('Could not get session after tab switch (network might not be ready):', error.message || error)
+          // If we get a timeout, force a page reload to clear everything
+          if (error.message === 'Timeout') {
+            console.error('Session check timed out after tab switch - forcing page reload')
+            if (typeof window !== 'undefined') {
+              window.location.reload()
+            }
+            return
+          }
+          // Other errors - might be network issue, but don't clear user state
+          console.warn('Could not get session after tab switch:', error.message || error)
           return
         }
         

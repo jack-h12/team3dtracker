@@ -16,7 +16,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { getDailyLeaderboard, getLifetimeLeaderboard, getUserTasks } from '@/lib/leaderboard'
 import { getUserProfile } from '@/lib/friends'
-import { getDisplayName, supabase, resetSupabaseClient } from '@/lib/supabase'
+import { getDisplayName, supabase, resetSupabaseClient, abortAllPendingRequests } from '@/lib/supabase'
 import { getUserInventory, getWeaponDamage, getProtectionValue } from '@/lib/shop'
 import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { getAvatarImage, getItemImage, getPotionTimeRemaining, getArmourTimeRemaining } from '@/lib/utils'
@@ -134,8 +134,9 @@ export default function Leaderboard() {
     // If tab was recently hidden, reset client before first load
     const initializeAndLoad = async () => {
       if (wasTabRecentlyHidden()) {
+        abortAllPendingRequests()
         resetSupabaseClient()
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise(resolve => setTimeout(resolve, 2000))
       }
       if (mountedRef.current) {
         loadLeaderboards()
@@ -147,10 +148,17 @@ export default function Leaderboard() {
     const handler = async () => {
       if (document.hidden || !mountedRef.current) return
       
+      const { abortAllPendingRequests } = await import('@/lib/supabase')
+      abortAllPendingRequests()
       resetSupabaseClient()
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      await new Promise(resolve => setTimeout(resolve, 2000))
       
       if (document.hidden || !mountedRef.current) return
+      
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return
+      }
       
       refreshSession().catch(() => {})
       
@@ -158,7 +166,7 @@ export default function Leaderboard() {
         if (!document.hidden && mountedRef.current) {
           loadLeaderboards(true)
         }
-      }, 500)
+      }, 1500)
     }
 
     // Listen for visibility changes (when user switches tabs)

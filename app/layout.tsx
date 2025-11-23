@@ -20,6 +20,9 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <link rel="icon" href="/team3dicon.webp" type="image/webp" />
+        <meta httpEquiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+        <meta httpEquiv="Pragma" content="no-cache" />
+        <meta httpEquiv="Expires" content="0" />
       </head>
       <body>{children}</body>
     </html>

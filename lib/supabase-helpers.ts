@@ -7,7 +7,7 @@
  * - Tab visibility issues
  */
 
-import { supabase, resetSupabaseClient } from './supabase'
+import { supabase, resetSupabaseClient, abortAllPendingRequests } from './supabase'
 
 /**
  * Wraps a Supabase request with timeout and retry logic
@@ -65,10 +65,41 @@ export async function withRetry<T>(
 }
 
 /**
+ * Checks if network is available
+ */
+async function isNetworkAvailable(): Promise<boolean> {
+  if (typeof window === 'undefined' || !('navigator' in window)) return true
+  
+  // Check online status
+  if (!navigator.onLine) return false
+  
+  // Try a quick fetch to verify connectivity
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 2000)
+    await fetch('/favicon.ico', { 
+      method: 'HEAD', 
+      cache: 'no-store',
+      signal: controller.signal 
+    })
+    clearTimeout(timeoutId)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Refreshes the Supabase session token after tab switches
  */
 export async function refreshSession(): Promise<void> {
   try {
+    // Check network first
+    if (!(await isNetworkAvailable())) {
+      console.warn('Network not available, skipping session refresh')
+      return
+    }
+    
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       await Promise.race([

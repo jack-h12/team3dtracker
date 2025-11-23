@@ -27,11 +27,96 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Create a singleton client instance
 let supabaseClient: ReturnType<typeof createClient> | null = null
+let activeAbortControllers = new Set<AbortController>()
+
+/**
+ * Aborts all pending requests - critical for fixing hanging requests after tab switches
+ */
+export function abortAllPendingRequests() {
+  if (typeof window === 'undefined') return
+  
+  activeAbortControllers.forEach(controller => {
+    try {
+      controller.abort()
+    } catch (e) {
+      // Ignore errors
+    }
+  })
+  activeAbortControllers.clear()
+}
+
+/**
+ * Creates a custom fetch that can be aborted
+ */
+function createAbortableFetch() {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const controller = new AbortController()
+    activeAbortControllers.add(controller)
+    
+    // Merge abort signals
+    const signal = init?.signal 
+      ? (() => {
+          const merged = new AbortController()
+          init.signal?.addEventListener('abort', () => merged.abort())
+          controller.signal.addEventListener('abort', () => merged.abort())
+          return merged.signal
+        })()
+      : controller.signal
+    
+    // Add timeout
+    const timeoutId = setTimeout(() => controller.abort(), 20000)
+    
+    try {
+      const response = await fetch(input, {
+        ...init,
+        signal,
+        cache: 'no-store',
+        keepalive: false,
+      })
+      clearTimeout(timeoutId)
+      activeAbortControllers.delete(controller)
+      return response
+    } catch (error: any) {
+      clearTimeout(timeoutId)
+      activeAbortControllers.delete(controller)
+      if (error.name === 'AbortError' || controller.signal.aborted) {
+        throw new Error('Request aborted')
+      }
+      throw error
+    }
+  }
+}
+
+/**
+ * Clears stale Supabase session data from localStorage
+ * This helps recover from persistent connection issues
+ */
+export function clearStaleSessionData() {
+  if (typeof window === 'undefined') return
+  
+  try {
+    const keys = Object.keys(localStorage)
+    keys.forEach(key => {
+      // Clear all Supabase auth-related keys
+      if (key.startsWith('supabase.auth.token') || 
+          key.startsWith('sb-') ||
+          key.includes('supabase') && key.includes('auth')) {
+        localStorage.removeItem(key)
+      }
+    })
+    console.log('Cleared stale Supabase session data from localStorage')
+  } catch (e) {
+    console.warn('Error clearing localStorage:', e)
+  }
+}
 
 /**
  * Resets the Supabase client - forces a fresh connection on the next request
  */
 export function resetSupabaseClient() {
+  // Abort all pending requests first
+  abortAllPendingRequests()
+  
   if (supabaseClient) {
     try {
       // Only disconnect realtime if we're in browser and it's connected
@@ -43,6 +128,15 @@ export function resetSupabaseClient() {
     }
   }
   supabaseClient = null
+}
+
+/**
+ * Force reset - clears session data and resets client
+ * Use this when normal reset doesn't work
+ */
+export function forceResetSupabaseClient() {
+  clearStaleSessionData()
+  resetSupabaseClient()
 }
 
 export const supabase = (() => {

@@ -34,7 +34,7 @@ import { getDisplayName } from '@/lib/supabase'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage } from '@/lib/utils'
 import { refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
-import { resetSupabaseClient } from '@/lib/supabase'
+import { resetSupabaseClient, abortAllPendingRequests } from '@/lib/supabase'
 import type { Profile } from '@/lib/supabase'
 
 interface AdminProps {
@@ -93,8 +93,9 @@ export default function Admin({ userId }: AdminProps) {
     // If tab was recently hidden, reset client before first load
     const initializeAndLoad = async () => {
       if (wasTabRecentlyHidden()) {
+        abortAllPendingRequests()
         resetSupabaseClient()
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise(resolve => setTimeout(resolve, 2000))
       }
       if (mountedRef.current) {
         checkAdminAndLoad()
@@ -106,10 +107,16 @@ export default function Admin({ userId }: AdminProps) {
     const handleVisibilityChange = async () => {
       if (document.hidden || !mountedRef.current) return
       
+      abortAllPendingRequests()
       resetSupabaseClient()
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      await new Promise(resolve => setTimeout(resolve, 2000))
       
       if (document.hidden || !mountedRef.current) return
+      
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return
+      }
       
       refreshSession().catch(() => {})
       
@@ -117,7 +124,7 @@ export default function Admin({ userId }: AdminProps) {
         if (!document.hidden && mountedRef.current) {
           checkAdminAndLoad(true)
         }
-      }, 500)
+      }, 1500)
     }
     
     document.addEventListener('visibilitychange', handleVisibilityChange)

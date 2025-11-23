@@ -20,7 +20,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getShopItems, purchaseItem, getUserInventory, useItem, getEffectDescription, getProtectionValue, getWeaponDamage } from '@/lib/shop'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
-import { getDisplayName, supabase, resetSupabaseClient } from '@/lib/supabase'
+import { getDisplayName, supabase, resetSupabaseClient, abortAllPendingRequests } from '@/lib/supabase'
 import { isEliteUser } from '@/lib/elite'
 import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
@@ -97,8 +97,9 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     // If tab was recently hidden, reset client before first load
     const initializeAndLoad = async () => {
       if (wasTabRecentlyHidden()) {
+        abortAllPendingRequests()
         resetSupabaseClient()
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise(resolve => setTimeout(resolve, 2000))
       }
       if (mountedRef.current) {
         loadData()
@@ -110,10 +111,16 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     const handler = async () => {
       if (document.hidden || !mountedRef.current) return
       
+      abortAllPendingRequests()
       resetSupabaseClient()
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      await new Promise(resolve => setTimeout(resolve, 2000))
       
       if (document.hidden || !mountedRef.current) return
+      
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return
+      }
       
       refreshSession().catch(() => {})
       
@@ -121,7 +128,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
         if (!document.hidden && mountedRef.current) {
           loadData(true)
         }
-      }, 500)
+      }, 1500)
     }
 
     // Listen for visibility changes (when user switches tabs)
