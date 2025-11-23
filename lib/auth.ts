@@ -14,12 +14,20 @@ import { supabase } from './supabase'
 import type { Profile } from './supabase'
 
 export async function signUp(email: string, password: string, username: string) {
+  // Get redirect URL - use environment variable if available, otherwise try to detect
+  let redirectUrl = '/'
+  if (typeof window !== 'undefined') {
+    redirectUrl = `${window.location.origin}/`
+  } else if (process.env.NEXT_PUBLIC_APP_URL) {
+    redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL}/`
+  }
+  
   // Create auth user (without metadata to avoid trigger issues)
   const { data: authData, error: authError } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      emailRedirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/`
+      emailRedirectTo: redirectUrl
     }
   })
 

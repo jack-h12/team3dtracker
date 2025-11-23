@@ -19,19 +19,50 @@
 import { supabase } from './supabase'
 import type { Task, Profile } from './supabase'
 
-// Get 5pm EST in UTC (EST is UTC-5, EDT is UTC-4)
+// Get 5pm Eastern Time (EST/EDT) in UTC
+// Automatically handles daylight saving time (EST is UTC-5, EDT is UTC-4)
 function getResetTimeToday(): Date {
   const now = new Date()
-  const estOffset = -5 // EST offset
-  const resetHour = 17 // 5pm
   
-  // Create date in EST
-  const estDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }))
-  estDate.setHours(resetHour, 0, 0, 0)
+  // Get current date in Eastern timezone (format: YYYY-MM-DD)
+  const easternDateStr = now.toLocaleString('en-CA', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  })
   
-  // Convert back to UTC
-  const utcReset = new Date(estDate.getTime() - (estOffset * 60 * 60 * 1000))
-  return utcReset
+  // Create a date string for 5pm today in Eastern time
+  const easternTimeString = `${easternDateStr}T17:00:00`
+  
+  // Calculate the timezone offset by comparing current time in both timezones
+  // This automatically handles DST
+  const nowUtc = now.getTime()
+  const nowEasternStr = now.toLocaleString('en-US', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  })
+  
+  // Parse Eastern time string to create a date (treating as local)
+  const [datePart, timePart] = nowEasternStr.split(', ')
+  const [month, day, year] = datePart.split('/')
+  const [hour, minute, second] = timePart.split(':')
+  const nowEasternAsLocal = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`)
+  
+  // Calculate offset: difference between UTC and Eastern representations
+  const offsetMs = nowUtc - nowEasternAsLocal.getTime()
+  
+  // Create 5pm Eastern as a local date
+  const fivePmEastern = new Date(easternTimeString)
+  
+  // Apply the offset to get UTC time
+  return new Date(fivePmEastern.getTime() + offsetMs)
 }
 
 export function shouldResetTasks(lastResetDate: string | null): boolean {
@@ -41,21 +72,16 @@ export function shouldResetTasks(lastResetDate: string | null): boolean {
   const now = new Date()
   const resetTime = getResetTimeToday()
   
-  // Only reset if:
-  // 1. It's actually a new day (not the same day)
-  // 2. We've passed today's reset time (5pm EST)
-  // 3. The last reset was before today's reset time
-  const lastResetDay = new Date(lastReset).toDateString()
-  const today = now.toDateString()
-  const isNewDay = lastResetDay !== today
-  
-  // Additional check: make sure we're not resetting multiple times on the same day
+  // Reset if:
+  // 1. We've passed today's reset time (5pm EST)
+  // 2. The last reset was before today's reset time
+  // This ensures we reset once per day at 5pm, even if checked multiple times
   const lastResetTime = lastReset.getTime()
   const resetTimeMs = resetTime.getTime()
   const nowMs = now.getTime()
   
-  // Only reset if it's a new day AND we're past the reset time AND last reset was before today's reset time
-  return isNewDay && nowMs >= resetTimeMs && lastResetTime < resetTimeMs
+  // Reset if we're past the reset time AND last reset was before today's reset time
+  return nowMs >= resetTimeMs && lastResetTime < resetTimeMs
 }
 
 export async function getTodayTasks(userId: string): Promise<Task[]> {
@@ -255,21 +281,16 @@ export function shouldResetAvatar(lastAvatarResetDate: string | null): boolean {
   const now = new Date()
   const resetTime = getResetTimeToday()
   
-  // Only reset if:
-  // 1. It's actually a new day (not the same day)
-  // 2. We've passed today's reset time (5pm EST)
-  // 3. The last reset was before today's reset time
-  const lastResetDay = new Date(lastReset).toDateString()
-  const today = now.toDateString()
-  const isNewDay = lastResetDay !== today
-  
-  // Additional check: make sure we're not resetting multiple times on the same day
+  // Reset if:
+  // 1. We've passed today's reset time (5pm EST)
+  // 2. The last reset was before today's reset time
+  // This ensures we reset once per day at 5pm, even if checked multiple times
   const lastResetTime = lastReset.getTime()
   const resetTimeMs = resetTime.getTime()
   const nowMs = now.getTime()
   
-  // Only reset if it's a new day AND we're past the reset time AND last reset was before today's reset time
-  return isNewDay && nowMs >= resetTimeMs && lastResetTime < resetTimeMs
+  // Reset if we're past the reset time AND last reset was before today's reset time
+  return nowMs >= resetTimeMs && lastResetTime < resetTimeMs
 }
 
 export async function resetAvatar(userId: string): Promise<void> {

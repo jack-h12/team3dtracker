@@ -379,3 +379,48 @@ export async function getUserTasks(adminUserId: string, targetUserId: string): P
   return data || []
 }
 
+/**
+ * Reset daily progress for all users (admin only)
+ * Resets: avatar_level to 0, tasks_completed_today to 0, and deletes all tasks
+ * This is equivalent to the 5pm daily reset but can be triggered manually by admins
+ */
+export async function resetAllUsersDailyProgress(adminUserId: string): Promise<void> {
+  const isUserAdmin = await isAdmin(adminUserId)
+  if (!isUserAdmin) {
+    throw new Error('Only admins can reset daily progress for all users')
+  }
+
+  // Use database function to bypass RLS
+  const { error } = await (supabase.rpc as any)('admin_reset_all_daily_progress', {})
+
+  if (error) {
+    // Fallback to manual reset if function doesn't exist
+    console.warn('Admin function not available, using manual reset:', error)
+    
+    // Delete all tasks for all users
+    // Use a condition that matches all records (created_at >= epoch start)
+    const { error: tasksError } = await supabase
+      .from('tasks')
+      .delete()
+      .gte('created_at', '1970-01-01T00:00:00Z')
+
+    if (tasksError) {
+      throw new Error(`Failed to delete all tasks: ${tasksError.message}. Please run add-admin-reset-all-daily-progress.sql in Supabase SQL Editor.`)
+    }
+
+    // Reset avatar_level and tasks_completed_today for all users
+    // Use a condition that matches all records (created_at >= epoch start)
+    const { error: profileError } = await ((supabase
+      .from('profiles') as any)
+      .update({
+        avatar_level: 0,
+        tasks_completed_today: 0
+      })
+      .gte('created_at', '1970-01-01T00:00:00Z'))
+
+    if (profileError) {
+      throw new Error(`Failed to reset user profiles: ${profileError.message}. Please run add-admin-reset-all-daily-progress.sql in Supabase SQL Editor.`)
+    }
+  }
+}
+

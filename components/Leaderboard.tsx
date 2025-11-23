@@ -16,9 +16,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { getDailyLeaderboard, getLifetimeLeaderboard, getUserTasks } from '@/lib/leaderboard'
 import { getUserProfile } from '@/lib/friends'
-import { getDisplayName, supabase } from '@/lib/supabase'
+import { getDisplayName, supabase, resetSupabaseClient } from '@/lib/supabase'
 import { getUserInventory, getWeaponDamage, getProtectionValue } from '@/lib/shop'
-import { withRetry } from '@/lib/supabase-helpers'
+import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { getAvatarImage, getItemImage, getPotionTimeRemaining, getArmourTimeRemaining } from '@/lib/utils'
 import type { ShopItem, UserInventory } from '@/lib/supabase'
 import type { Profile, Task } from '@/lib/supabase'
@@ -131,25 +131,34 @@ export default function Leaderboard() {
     mountedRef.current = true
     isLoadingRef.current = false
 
-    // Run on mount - fetch data when component first loads
-    loadLeaderboards()
-
-    // Run whenever the tab becomes active again
-    // Silently refresh data in background without clearing UI
-    const handler = () => {
-      // Only reload if tab is visible (not hidden) and not already loading
-      if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
-        console.log('Leaderboard: Tab became visible, silently refreshing data...')
-        // Reset loading flag to allow fresh load
-        isLoadingRef.current = false
-        // Wait a moment for browser to be ready
-        setTimeout(() => {
-          if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
-            // Pass silent=true to refresh without showing loading state
-            loadLeaderboards(true)
-          }
-        }, 500)
+    // If tab was recently hidden, reset client before first load
+    const initializeAndLoad = async () => {
+      if (wasTabRecentlyHidden()) {
+        resetSupabaseClient()
+        await new Promise(resolve => setTimeout(resolve, 1000))
       }
+      if (mountedRef.current) {
+        loadLeaderboards()
+      }
+    }
+    initializeAndLoad()
+
+    // Refresh data when tab becomes visible
+    const handler = async () => {
+      if (document.hidden || !mountedRef.current) return
+      
+      resetSupabaseClient()
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      if (document.hidden || !mountedRef.current) return
+      
+      refreshSession().catch(() => {})
+      
+      setTimeout(() => {
+        if (!document.hidden && mountedRef.current) {
+          loadLeaderboards(true)
+        }
+      }, 500)
     }
 
     // Listen for visibility changes (when user switches tabs)
@@ -234,10 +243,10 @@ export default function Leaderboard() {
       
       <div style={{ 
         display: 'flex', 
-        gap: '12px', 
+        gap: '8px', 
         marginBottom: '30px',
         background: '#0a0a0a',
-        padding: '8px',
+        padding: '6px',
         borderRadius: '12px',
         border: '1px solid #3a3a3a'
       }}>
@@ -248,7 +257,7 @@ export default function Leaderboard() {
           }}
           style={{
             flex: 1,
-            padding: '14px 20px',
+            padding: '12px 8px',
             background: activeTab === 'daily'
               ? 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)'
               : 'transparent',
@@ -257,9 +266,12 @@ export default function Leaderboard() {
             borderRadius: '8px',
             cursor: 'pointer',
             fontWeight: 700,
-            fontSize: '15px',
+            fontSize: 'clamp(11px, 2.5vw, 15px)',
             transition: 'all 0.3s ease',
-            boxShadow: activeTab === 'daily' ? '0 4px 15px rgba(255, 107, 53, 0.4)' : 'none'
+            boxShadow: activeTab === 'daily' ? '0 4px 15px rgba(255, 107, 53, 0.4)' : 'none',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
           }}
         >
           💪 DAILY LEVEL
@@ -271,7 +283,7 @@ export default function Leaderboard() {
           }}
           style={{
             flex: 1,
-            padding: '14px 20px',
+            padding: '12px 8px',
             background: activeTab === 'lifetime'
               ? 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)'
               : 'transparent',
@@ -280,9 +292,12 @@ export default function Leaderboard() {
             borderRadius: '8px',
             cursor: 'pointer',
             fontWeight: 700,
-            fontSize: '15px',
+            fontSize: 'clamp(11px, 2.5vw, 15px)',
             transition: 'all 0.3s ease',
-            boxShadow: activeTab === 'lifetime' ? '0 4px 15px rgba(255, 107, 53, 0.4)' : 'none'
+            boxShadow: activeTab === 'lifetime' ? '0 4px 15px rgba(255, 107, 53, 0.4)' : 'none',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
           }}
         >
           ⚡ LIFETIME EXP
@@ -321,8 +336,11 @@ export default function Leaderboard() {
             background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
             border: '1px solid #3a3a3a',
             borderRadius: '16px',
-            padding: '30px',
-            marginBottom: '30px'
+            padding: 'clamp(20px, 4vw, 30px)',
+            marginBottom: '30px',
+            overflow: 'hidden',
+            width: '100%',
+            boxSizing: 'border-box'
           }}>
             <div style={{ textAlign: 'center', marginBottom: '30px' }}>
               <div style={{ position: 'relative', display: 'inline-block', marginBottom: '20px' }}>
@@ -417,8 +435,8 @@ export default function Leaderboard() {
                   src={getAvatarImage(selectedUser.avatar_level)}
                   alt={`${selectedUser.username} avatar`}
                   style={{
-                    width: '120px',
-                    height: '120px',
+                    width: 'clamp(80px, 20vw, 120px)',
+                    height: 'clamp(80px, 20vw, 120px)',
                     objectFit: 'cover',
                     borderRadius: '16px',
                     border: '3px solid #ff6b35',
@@ -515,14 +533,17 @@ export default function Leaderboard() {
                             padding: '8px 12px',
                             background: 'rgba(0, 0, 0, 0.95)',
                             color: '#4a9eff',
-                            fontSize: '12px',
+                            fontSize: 'clamp(10px, 2.5vw, 12px)',
                             fontWeight: 700,
                             borderRadius: '8px',
                             whiteSpace: 'nowrap',
                             border: '1px solid #4a9eff',
                             boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)',
                             zIndex: 10,
-                            animation: 'fadeIn 0.2s ease-out'
+                            animation: 'fadeIn 0.2s ease-out',
+                            maxWidth: '90vw',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
                           }}
                         >
                           {armourTimeRemaining}
@@ -552,18 +573,20 @@ export default function Leaderboard() {
               </div>
               
               <h3 style={{
-                fontSize: '28px',
+                fontSize: 'clamp(20px, 5vw, 28px)',
                 fontWeight: 800,
                 margin: '0 0 20px 0',
                 color: '#fff',
-                letterSpacing: '-0.5px'
+                letterSpacing: '-0.5px',
+                wordBreak: 'break-word',
+                overflowWrap: 'break-word'
               }}>{selectedUser.username.toUpperCase()}</h3>
             </div>
             
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '15px',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+              gap: 'clamp(10px, 2vw, 15px)',
               marginBottom: '30px'
             }} className="responsive-grid-3">
               <div style={{
@@ -619,8 +642,8 @@ export default function Leaderboard() {
               ) : (
                 <div style={{ 
                   display: 'grid', 
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', 
-                  gap: '12px' 
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(100px, 20vw, 120px), 1fr))', 
+                  gap: 'clamp(8px, 2vw, 12px)'
                 }}>
                   {userInventory.map((inv) => (
                     <div
@@ -772,7 +795,7 @@ export default function Leaderboard() {
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      padding: '20px',
+                      padding: 'clamp(12px, 3vw, 20px)',
                       background: rankColor,
                       border: index < 3 ? '2px solid #ff6b35' : '1px solid #3a3a3a',
                       borderRadius: '16px',
@@ -781,7 +804,10 @@ export default function Leaderboard() {
                       boxShadow: index < 3 
                         ? '0 8px 30px rgba(255, 107, 53, 0.3)'
                         : '0 4px 15px rgba(0, 0, 0, 0.2)',
-                      gap: '20px'
+                      gap: 'clamp(8px, 2vw, 20px)',
+                      overflow: 'hidden',
+                      width: '100%',
+                      boxSizing: 'border-box'
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.transform = 'translateY(-4px)'
@@ -796,9 +822,10 @@ export default function Leaderboard() {
                   >
                     {/* Rank */}
                     <div style={{
-                      minWidth: '60px',
+                      minWidth: 'clamp(40px, 8vw, 60px)',
+                      flexShrink: 0,
                       textAlign: 'center',
-                      fontSize: '28px',
+                      fontSize: 'clamp(20px, 5vw, 28px)',
                       fontWeight: 800,
                       color: index < 3 ? '#000' : '#ff6b35'
                     }}>
@@ -955,14 +982,17 @@ export default function Leaderboard() {
                                   padding: '8px 12px',
                                   background: 'rgba(0, 0, 0, 0.95)',
                                   color: '#4a9eff',
-                                  fontSize: '12px',
+                                  fontSize: 'clamp(10px, 2.5vw, 12px)',
                                   fontWeight: 700,
                                   borderRadius: '8px',
                                   whiteSpace: 'nowrap',
                                   border: '1px solid #4a9eff',
                                   boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5)',
                                   zIndex: 10,
-                                  animation: 'fadeIn 0.2s ease-out'
+                                  animation: 'fadeIn 0.2s ease-out',
+                                  maxWidth: '90vw',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis'
                                 }}
                               >
                                 {armourTimeRemaining}
@@ -994,34 +1024,42 @@ export default function Leaderboard() {
                         src={getAvatarImage(user.avatar_level)}
                         alt={`${getDisplayName(user)} avatar`}
                         style={{
-                          width: '70px',
-                          height: '70px',
+                          width: 'clamp(50px, 12vw, 70px)',
+                          height: 'clamp(50px, 12vw, 70px)',
                           objectFit: 'cover',
                           borderRadius: '12px',
                           border: '2px solid rgba(255, 107, 53, 0.5)',
                           boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
                           position: 'relative',
-                          zIndex: 1
+                          zIndex: 1,
+                          flexShrink: 0
                         }}
                       />
                     </div>
                     
                     {/* User Info */}
-                    <div style={{ flex: 1 }}>
+                    <div style={{ 
+                      flex: 1, 
+                      minWidth: 0,
+                      overflow: 'hidden'
+                    }}>
                       <div style={{
-                        fontSize: '20px',
+                        fontSize: 'clamp(14px, 3.5vw, 20px)',
                         fontWeight: 700,
                         color: index < 3 ? '#000' : '#fff',
                         marginBottom: '6px',
-                        letterSpacing: '-0.5px'
+                        letterSpacing: '-0.5px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
                       }}>
                         {getDisplayName(user).toUpperCase()}
                         {user.display_name && (
                           <span style={{
-                            fontSize: '12px',
+                            fontSize: 'clamp(10px, 2vw, 12px)',
                             color: index < 3 ? '#666' : '#888',
                             fontWeight: 500,
-                            marginLeft: '8px',
+                            marginLeft: '4px',
                             fontStyle: 'italic'
                           }}>
                             ({user.username})
@@ -1029,7 +1067,7 @@ export default function Leaderboard() {
                         )}
                       </div>
                       <div style={{
-                        fontSize: '13px',
+                        fontSize: 'clamp(11px, 2.5vw, 13px)',
                         fontWeight: 600,
                         color: index < 3 ? '#333' : '#888'
                       }}>
@@ -1039,9 +1077,10 @@ export default function Leaderboard() {
                     
                     {/* Value Badge */}
                     <div style={{
-                      minWidth: '100px',
+                      minWidth: 'clamp(70px, 15vw, 100px)',
+                      flexShrink: 0,
                       textAlign: 'center',
-                      padding: '12px 20px',
+                      padding: 'clamp(8px, 2vw, 12px) clamp(12px, 3vw, 20px)',
                       background: index < 3 
                         ? 'rgba(0, 0, 0, 0.2)'
                         : 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)',
@@ -1049,7 +1088,7 @@ export default function Leaderboard() {
                       border: index < 3 ? '1px solid rgba(0, 0, 0, 0.3)' : 'none'
                     }}>
                       <div style={{
-                        fontSize: '32px',
+                        fontSize: 'clamp(24px, 6vw, 32px)',
                         fontWeight: 800,
                         color: index < 3 ? '#000' : '#fff',
                         lineHeight: '1'
@@ -1057,7 +1096,7 @@ export default function Leaderboard() {
                         {value}
                       </div>
                       <div style={{
-                        fontSize: '11px',
+                        fontSize: 'clamp(9px, 2vw, 11px)',
                         fontWeight: 600,
                         color: index < 3 ? '#333' : '#fff',
                         opacity: 0.8,

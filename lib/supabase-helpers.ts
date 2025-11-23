@@ -7,7 +7,7 @@
  * - Tab visibility issues
  */
 
-import { supabase } from './supabase'
+import { supabase, resetSupabaseClient } from './supabase'
 
 /**
  * Wraps a Supabase request with timeout and retry logic
@@ -65,38 +65,55 @@ export async function withRetry<T>(
 }
 
 /**
- * Refreshes the Supabase session and ensures it's valid
+ * Refreshes the Supabase session token after tab switches
  */
-export async function refreshSession(): Promise<boolean> {
+export async function refreshSession(): Promise<void> {
   try {
-    // Try to refresh the session with timeout wrapper
-    const sessionResult = await withRetry(
-      () => supabase.auth.getSession(),
-      { maxRetries: 1, timeout: 5000 }
-    )
-    
-    const { data: { session }, error } = sessionResult
-    
-    if (error) {
-      console.error('Error refreshing session:', error)
-      // Still return true - let actual requests handle the error
-      return true
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) {
+      await Promise.race([
+        supabase.auth.refreshSession(session),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ])
     }
-
-    if (!session) {
-      console.warn('No active session')
-      // Still return true - let actual requests handle the error
-      return true
-    }
-
-    // Don't validate with getUser() - it can timeout too
-    // Just having a valid session object is enough
-    return true
-  } catch (err: any) {
-    console.warn('Session refresh failed or timed out, but will continue anyway:', err?.message)
-    // Return true anyway - let the actual requests handle errors
-    // This allows the app to continue even if session refresh fails
-    return true
+  } catch (err) {
+    // Ignore errors - session might still be valid
   }
 }
+
+// Track when tab was last hidden to detect tab switches
+let lastTabHiddenTime: number | null = null
+let isTabVisible = true
+let visibilityListenerSetup = false
+
+// Setup visibility listener only in browser and only once
+function setupVisibilityListener() {
+  if (typeof window === 'undefined' || visibilityListenerSetup) return
+  
+  visibilityListenerSetup = true
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      lastTabHiddenTime = Date.now()
+      isTabVisible = false
+    } else {
+      isTabVisible = true
+    }
+  })
+}
+
+// Initialize on first use in browser
+if (typeof window !== 'undefined') {
+  setupVisibilityListener()
+}
+
+/**
+ * Checks if the tab was recently hidden (within the last 5 seconds)
+ * This is useful when components mount after a tab switch
+ * Safe to call during SSR (returns false)
+ */
+export function wasTabRecentlyHidden(): boolean {
+  if (typeof window === 'undefined') return false
+  return lastTabHiddenTime !== null && Date.now() - lastTabHiddenTime < 5000
+}
+
 

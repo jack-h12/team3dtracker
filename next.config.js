@@ -1,13 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Remove standalone output for Vercel (Vercel handles this automatically)
-  // output: 'standalone', // Commented out - not needed for Vercel
-  // Add timeout for serverless functions
-  experimental: {
-    serverActions: {
-      bodySizeLimit: '2mb',
-    },
+  // Ensure proper handling of environment variables
+  env: {
+    // NEXT_PUBLIC_* vars are automatically available, no need to explicitly list
+  },
+  // Optimize for Vercel deployment
+  swcMinify: true,
+  // Ensure images are optimized
+  images: {
+    unoptimized: false,
   },
 }
 

@@ -15,7 +15,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   isAdmin,
   promoteToAdmin,
@@ -27,11 +27,14 @@ import {
   updateUserExp,
   updateUserLevel,
   resetUserData,
-  updateUserUsername
+  updateUserUsername,
+  resetAllUsersDailyProgress
 } from '@/lib/admin'
 import { getDisplayName } from '@/lib/supabase'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage } from '@/lib/utils'
+import { refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
+import { resetSupabaseClient } from '@/lib/supabase'
 import type { Profile } from '@/lib/supabase'
 
 interface AdminProps {
@@ -46,36 +49,83 @@ export default function Admin({ userId }: AdminProps) {
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set())
   const [editValues, setEditValues] = useState<Record<string, { gold?: string; exp?: string; level?: string; username?: string }>>({})
 
-  const checkAdminAndLoad = useCallback(async () => {
-    setLoading(true)
+  const mountedRef = useRef(true)
+
+  const checkAdminAndLoad = useCallback(async (silent: boolean = false) => {
+    if (!silent) {
+      setLoading(true)
+    }
     try {
       const adminStatus = await isAdmin(userId)
-      setUserIsAdmin(adminStatus)
+      if (mountedRef.current) {
+        setUserIsAdmin(adminStatus)
+      }
       
       if (adminStatus) {
         const allUsers = await getAllUsers()
-        setUsers(allUsers)
-        // Initialize edit values with current user data
-        const initialValues: Record<string, { gold?: string; exp?: string; level?: string; username?: string }> = {}
-        allUsers.forEach(user => {
-          initialValues[user.id] = {
-            gold: user.gold.toString(),
-            exp: user.lifetime_exp.toString(),
-            level: user.avatar_level.toString(),
-            username: user.username
-          }
-        })
-        setEditValues(initialValues)
+        if (mountedRef.current) {
+          setUsers(allUsers)
+          // Initialize edit values with current user data
+          const initialValues: Record<string, { gold?: string; exp?: string; level?: string; username?: string }> = {}
+          allUsers.forEach(user => {
+            initialValues[user.id] = {
+              gold: user.gold.toString(),
+              exp: user.lifetime_exp.toString(),
+              level: user.avatar_level.toString(),
+              username: user.username
+            }
+          })
+          setEditValues(initialValues)
+        }
       }
     } catch (err) {
       console.error('Error checking admin status:', err)
     } finally {
-      setLoading(false)
+      if (mountedRef.current && !silent) {
+        setLoading(false)
+      }
     }
   }, [userId])
 
   useEffect(() => {
-    checkAdminAndLoad()
+    mountedRef.current = true
+    
+    // If tab was recently hidden, reset client before first load
+    const initializeAndLoad = async () => {
+      if (wasTabRecentlyHidden()) {
+        resetSupabaseClient()
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+      if (mountedRef.current) {
+        checkAdminAndLoad()
+      }
+    }
+    initializeAndLoad()
+    
+    // Refresh data when tab becomes visible
+    const handleVisibilityChange = async () => {
+      if (document.hidden || !mountedRef.current) return
+      
+      resetSupabaseClient()
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      if (document.hidden || !mountedRef.current) return
+      
+      refreshSession().catch(() => {})
+      
+      setTimeout(() => {
+        if (!document.hidden && mountedRef.current) {
+          checkAdminAndLoad(true)
+        }
+      }, 500)
+    }
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    
+    return () => {
+      mountedRef.current = false
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [checkAdminAndLoad])
 
   const toggleExpand = (userId: string) => {
@@ -285,6 +335,27 @@ export default function Admin({ userId }: AdminProps) {
     }))
   }
 
+  const handleResetAllDailyProgress = useCallback(async () => {
+    if (actionLoading) return
+    
+    const confirmed = await showConfirm(
+      'Reset All Daily Progress',
+      '⚠️ WARNING: This will reset daily progress for ALL users:\n\n• All tasks will be deleted\n• All avatar levels will be reset to 0\n• All daily task counters will be reset to 0\n\nThis cannot be undone! Continue?'
+    )
+    if (!confirmed) return
+
+    setActionLoading(true)
+    try {
+      await resetAllUsersDailyProgress(userId)
+      await checkAdminAndLoad()
+      await showModal('Success', 'Daily progress reset for all users!', 'success')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to reset daily progress', 'error')
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, actionLoading, checkAdminAndLoad])
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: '60px 20px' }}>
@@ -346,6 +417,52 @@ export default function Admin({ userId }: AdminProps) {
         }}>ADMIN PANEL - CREATIVE MODE</h2>
         <p style={{ color: '#888', fontSize: '14px', fontWeight: 500 }}>
           Full control over users • Modify stats • Delete users • Manage everything
+        </p>
+      </div>
+
+      {/* Global Actions */}
+      <div style={{
+        marginBottom: '30px',
+        padding: '20px',
+        background: 'linear-gradient(135deg, #1a0a0a 0%, #2a1a1a 100%)',
+        border: '2px solid #ff4444',
+        borderRadius: '12px'
+      }}>
+        <h3 style={{
+          fontSize: '18px',
+          fontWeight: 700,
+          margin: '0 0 15px 0',
+          color: '#ff6b35'
+        }}>
+          ⚡ GLOBAL ACTIONS
+        </h3>
+        <button
+          onClick={handleResetAllDailyProgress}
+          disabled={actionLoading}
+          style={{
+            padding: '14px 24px',
+            background: actionLoading
+              ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
+              : 'linear-gradient(135deg, #ff4444 0%, #cc0000 100%)',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '10px',
+            cursor: actionLoading ? 'not-allowed' : 'pointer',
+            fontWeight: 700,
+            fontSize: '14px',
+            width: '100%'
+          }}
+        >
+          {actionLoading ? '⏳ Resetting...' : '🔄 Reset Daily Progress for ALL Users'}
+        </button>
+        <p style={{
+          color: '#888',
+          fontSize: '12px',
+          marginTop: '10px',
+          marginBottom: 0,
+          fontStyle: 'italic'
+        }}>
+          This resets all tasks, avatar levels, and daily counters for every user (like the 5pm reset)
         </p>
       </div>
 

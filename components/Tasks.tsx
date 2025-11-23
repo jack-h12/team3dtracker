@@ -20,8 +20,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { getTodayTasks, addTask, completeTask, deleteTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
 import { getCurrentProfile } from '@/lib/auth'
 import { showModal } from '@/lib/modal'
-import { supabase } from '@/lib/supabase'
-import { withRetry } from '@/lib/supabase-helpers'
+import { supabase, resetSupabaseClient } from '@/lib/supabase'
+import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import type { Task, Profile } from '@/lib/supabase'
 
 interface TasksProps {
@@ -231,8 +231,17 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   useEffect(() => {
     mountedRef.current = true;
 
-    // Load on mount
-    loadTasks(true);
+    // If tab was recently hidden, reset client before first load
+    const initializeAndLoad = async () => {
+      if (wasTabRecentlyHidden()) {
+        resetSupabaseClient()
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+      if (mountedRef.current) {
+        loadTasks(true)
+      }
+    }
+    initializeAndLoad()
     
     // Check for reset every minute (for daily task reset at 5pm EST)
     const interval = setInterval(() => {
@@ -241,45 +250,23 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       }
     }, 60000);
 
-    // Simple visibility change handler
-    // When tab becomes visible, silently refresh data in background without clearing UI
-    const handleVisibilityChange = () => {
-      console.log("Tasks: visibilitychange event fired, hidden:", document.hidden);
+    // Refresh data when tab becomes visible
+    const handleVisibilityChange = async () => {
+      if (document.hidden || !mountedRef.current) return
       
-      if (document.hidden || !mountedRef.current) {
-        console.log("Tasks: Skipping - tab hidden or component unmounted");
-        return;
-      }
+      resetSupabaseClient()
+      await new Promise(resolve => setTimeout(resolve, 1000))
       
-      console.log("Tasks: Tab visible, silently refreshing data in background...");
+      if (document.hidden || !mountedRef.current) return
       
-      // Reset loading flag to allow fresh load
-      isLoadingRef.current = false;
+      refreshSession().catch(() => {})
       
-      // Wait 500ms for browser to re-establish connections after tab switch
-      // This is critical - browsers throttle network when tab is hidden
-      // Use silent=true to refresh without clearing existing UI
       setTimeout(() => {
-        console.log("Tasks: Timeout fired, checking conditions...", {
-          hidden: document.hidden,
-          mounted: mountedRef.current,
-          isLoading: isLoadingRef.current
-        });
-        
-        if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
-          console.log("Tasks: Calling loadTasks(false, true) for silent refresh...");
-          // Use ref to get latest function - avoids stale closure issues
-          // Pass silent=true to refresh without showing loading state
-          if (loadTasksRef.current) {
-            loadTasksRef.current(false, true);
-          } else {
-            console.error("Tasks: loadTasksRef.current is null!");
-          }
-        } else {
-          console.log("Tasks: Conditions not met, skipping loadTasks");
+        if (!document.hidden && mountedRef.current && loadTasksRef.current) {
+          loadTasksRef.current(false, true)
         }
-      }, 500);
-    };
+      }, 500)
+    }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
 

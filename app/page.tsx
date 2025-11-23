@@ -15,9 +15,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '@/lib/supabase'
+import { supabase, resetSupabaseClient } from '@/lib/supabase'
 import { getCurrentUser, getCurrentProfile, signOut } from '@/lib/auth'
 import { shouldResetTasks, resetDailyTasks } from '@/lib/tasks'
+import { refreshSession } from '@/lib/supabase-helpers'
 import Auth from '@/components/Auth'
 import Tasks from '@/components/Tasks'
 import Avatar from '@/components/Avatar'
@@ -50,15 +51,8 @@ export default function Home() {
   // Function to initialize auth and load user data
   const initAuth = async () => {
     try {
-      // Check if Supabase URL is valid (not placeholder)
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-      
-      if (!supabaseUrl || supabaseUrl.includes('placeholder')) {
-        console.warn('Supabase not configured - showing auth screen')
-        console.warn('Make sure NEXT_PUBLIC_SUPABASE_URL is set in Vercel environment variables')
-        setLoading(false)
-        return
-      }
+      // Note: process.env.NEXT_PUBLIC_* vars are replaced at build time by Next.js
+      // They're available in both client and server, but we check here for safety
       
       // Get session - refresh it to ensure it's valid
       const { data: { session }, error } = await supabase.auth.getSession()
@@ -119,21 +113,36 @@ export default function Home() {
       }
     })
 
-    // Handle visibility change - silently refresh session when tab becomes active
-    // Don't clear existing data, just refresh in background
+    // Handle visibility change - wait for network to be ready, then refresh
     const handleVisibilityChange = async () => {
       if (!mounted || document.hidden) return
       
-      console.log('Tab became visible - silently refreshing session...')
+      // Reset client and wait for network to be ready
+      resetSupabaseClient()
+      await new Promise(resolve => setTimeout(resolve, 1000))
       
-      // Tab became visible, refresh the session silently (don't clear UI)
+      if (!mounted || document.hidden) return
+      
+      // Refresh session in background
+      refreshSession().catch(() => {})
+      
+      if (!mounted) return
+      
+      // Try to get the current session (with timeout) to refresh user data
       try {
-        const { data: { session }, error } = await supabase.auth.getSession()
+        const { data: { session }, error } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<{ data: { session: null }, error: null }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null }, error: null }), 3000)
+          )
+        ]) as { data: { session: any }, error: any }
         
         if (!mounted) return
         
         if (error) {
-          console.error('Error refreshing session on visibility change:', error)
+          // Error getting session - might be network issue, but don't clear user state
+          // The session might still be valid, just network isn't ready
+          console.warn('Could not get session after tab switch (network might not be ready):', error.message || error)
           return
         }
         
@@ -141,37 +150,58 @@ export default function Home() {
           // Silently refresh user data when tab becomes active
           // Always refresh to keep data up to date, React won't re-render if values are the same
           setUser(session.user)
-          const userProfile = await getCurrentProfile()
-          if (userProfile && mounted) {
-            setProfile(userProfile)
-            const adminStatus = await isAdmin(session.user.id)
-            if (mounted) setUserIsAdmin(adminStatus)
+          try {
+            const userProfile = await Promise.race([
+              getCurrentProfile(),
+              new Promise<Profile | null>((resolve) => setTimeout(() => resolve(null), 5000))
+            ])
+            if (userProfile && mounted) {
+              setProfile(userProfile)
+              try {
+                const adminStatus = await Promise.race([
+                  isAdmin(session.user.id),
+                  new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000))
+                ])
+                if (mounted) setUserIsAdmin(adminStatus)
+              } catch (adminErr) {
+                // Ignore admin check errors
+              }
+            }
+          } catch (profileErr) {
+            // Ignore profile refresh errors - data might still be valid
+            console.warn('Could not refresh profile after tab switch:', profileErr)
           }
         } else {
-          // Session expired, clear state (this is expected behavior)
-          setUser(null)
-          setProfile(null)
-          setUserIsAdmin(false)
+          // No session - user might be logged out, but don't clear state immediately
+          // Wait a bit in case network isn't ready yet
+          setTimeout(async () => {
+            if (mounted) {
+              try {
+                const { data: { session: retrySession } } = await supabase.auth.getSession()
+                if (!retrySession && mounted) {
+                  setUser(null)
+                  setProfile(null)
+                  setUserIsAdmin(false)
+                }
+              } catch (retryErr) {
+                // Ignore retry errors
+              }
+            }
+          }, 2000)
         }
       } catch (err) {
-        console.error('Error handling visibility change:', err)
+        // Ignore errors - session might still be valid, just network issue
+        console.warn('Error handling visibility change:', err)
       }
     }
 
-    const handleFocus = async () => {
-      if (!mounted) return
-      console.log('Window focused - refreshing session...')
-      await handleVisibilityChange()
-    }
-
+    // Only use visibilitychange - focus event is redundant and causes duplicate calls
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('focus', handleFocus)
 
     return () => {
       mounted = false
       subscription.unsubscribe()
       document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('focus', handleFocus)
     }
   }, [])
 
@@ -530,4 +560,5 @@ export default function Home() {
     </div>
   )
 }
+
 

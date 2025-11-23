@@ -28,6 +28,23 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // Create a singleton client instance
 let supabaseClient: ReturnType<typeof createClient> | null = null
 
+/**
+ * Resets the Supabase client - forces a fresh connection on the next request
+ */
+export function resetSupabaseClient() {
+  if (supabaseClient) {
+    try {
+      // Only disconnect realtime if we're in browser and it's connected
+      if (typeof window !== 'undefined' && supabaseClient.realtime) {
+        supabaseClient.realtime.disconnect()
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+  }
+  supabaseClient = null
+}
+
 export const supabase = (() => {
   if (supabaseClient) {
     return supabaseClient
@@ -38,27 +55,32 @@ export const supabase = (() => {
   const key = supabaseAnonKey || 'placeholder-key'
 
   // Validate that we have real values (not placeholders)
-  if (url.includes('placeholder') || key.includes('placeholder')) {
-    if (typeof window !== 'undefined') {
+  // Only warn in browser to avoid build errors
+  if (typeof window !== 'undefined') {
+    if (url.includes('placeholder') || key.includes('placeholder')) {
       console.error('Supabase not configured properly. Using placeholder values. The app will not work until environment variables are set.')
     }
-  }
-
-  // Log for debugging (only in development)
-  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-    console.log('Supabase initialized:', {
-      urlSet: !!url && !url.includes('placeholder'),
-      keySet: !!key && !key.includes('placeholder'),
-      urlPreview: url.substring(0, 30) + (url.length > 30 ? '...' : '')
-    })
+    
+    // Log for debugging (only in development)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Supabase initialized:', {
+        urlSet: !!url && !url.includes('placeholder'),
+        keySet: !!key && !key.includes('placeholder'),
+        urlPreview: url.substring(0, 30) + (url.length > 30 ? '...' : '')
+      })
+    }
   }
 
   supabaseClient = createClient(url, key, {
     auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-      storage: typeof window !== 'undefined' ? window.localStorage : undefined
+      persistSession: typeof window !== 'undefined',
+      autoRefreshToken: typeof window !== 'undefined',
+      detectSessionInUrl: typeof window !== 'undefined',
+      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+      flowType: 'pkce'
+    },
+    db: {
+      schema: 'public'
     }
   })
 

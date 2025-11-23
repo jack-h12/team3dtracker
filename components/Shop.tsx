@@ -20,9 +20,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getShopItems, purchaseItem, getUserInventory, useItem, getEffectDescription, getProtectionValue, getWeaponDamage } from '@/lib/shop'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
-import { getDisplayName, supabase } from '@/lib/supabase'
+import { getDisplayName, supabase, resetSupabaseClient } from '@/lib/supabase'
 import { isEliteUser } from '@/lib/elite'
-import { withRetry } from '@/lib/supabase-helpers'
+import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage, getItemImage } from '@/lib/utils'
 import AttackAnimation from '@/components/AttackAnimation'
@@ -94,25 +94,34 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     mountedRef.current = true
     isLoadingRef.current = false
 
-    // Run on mount - fetch data when component first loads
-    loadData()
-
-    // Run whenever the tab becomes active again
-    // Silently refresh data in background without clearing UI
-    const handler = () => {
-      // Only reload if tab is visible (not hidden) and not already loading
-      if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
-        console.log('Shop: Tab became visible, silently refreshing data...')
-        // Reset loading flag to allow fresh load
-        isLoadingRef.current = false
-        // Wait a moment for browser to be ready
-        setTimeout(() => {
-          if (!document.hidden && mountedRef.current && !isLoadingRef.current) {
-            // Pass silent=true to refresh without showing loading state
-            loadData(true)
-          }
-        }, 500)
+    // If tab was recently hidden, reset client before first load
+    const initializeAndLoad = async () => {
+      if (wasTabRecentlyHidden()) {
+        resetSupabaseClient()
+        await new Promise(resolve => setTimeout(resolve, 1000))
       }
+      if (mountedRef.current) {
+        loadData()
+      }
+    }
+    initializeAndLoad()
+
+    // Refresh data when tab becomes visible
+    const handler = async () => {
+      if (document.hidden || !mountedRef.current) return
+      
+      resetSupabaseClient()
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      if (document.hidden || !mountedRef.current) return
+      
+      refreshSession().catch(() => {})
+      
+      setTimeout(() => {
+        if (!document.hidden && mountedRef.current) {
+          loadData(true)
+        }
+      }, 500)
     }
 
     // Listen for visibility changes (when user switches tabs)
