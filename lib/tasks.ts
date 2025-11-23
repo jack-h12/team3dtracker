@@ -84,12 +84,18 @@ export function shouldResetTasks(lastResetDate: string | null): boolean {
   return nowMs >= resetTimeMs && lastResetTime < resetTimeMs
 }
 
-export async function getTodayTasks(userId: string): Promise<Task[]> {
-  const { data, error } = await supabase
+export async function getTodayTasks(userId: string, signal?: AbortSignal): Promise<Task[]> {
+  const query = supabase
     .from('tasks')
     .select('*')
     .eq('user_id', userId)
     .order('task_order', { ascending: true })
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   return data || []

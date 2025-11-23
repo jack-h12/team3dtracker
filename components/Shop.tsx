@@ -63,10 +63,10 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     }
     try {
       const [shopItems, userInv, users, eliteStatus] = await Promise.all([
-        withRetry(() => getShopItems(), { maxRetries: 3, timeout: 15000 }),
-        withRetry(() => getUserInventory(userId), { maxRetries: 3, timeout: 15000 }),
-        withRetry(() => getDailyLeaderboard(), { maxRetries: 3, timeout: 15000 }),
-        withRetry(() => isEliteUser(userId), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getShopItems(signal), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getUserInventory(userId, signal), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getDailyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => isEliteUser(userId, signal), { maxRetries: 3, timeout: 15000 }),
       ])
       
       if (mountedRef.current) {

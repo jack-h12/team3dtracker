@@ -161,7 +161,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
 
       // Fetch tasks with retry and timeout handling
       const taskList = await withRetry(
-        () => getTodayTasks(userId),
+        ({ signal }) => getTodayTasks(userId, signal),
         { maxRetries: 3, timeout: 15000 }
       );
 

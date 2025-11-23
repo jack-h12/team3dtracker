@@ -76,8 +76,8 @@ export default function Leaderboard() {
       // Fetch with retry and timeout handling
       // Use longer timeout and more retries for tab visibility scenarios
       const [daily, lifetime] = await Promise.all([
-        withRetry(() => getDailyLeaderboard(), { maxRetries: 3, timeout: 15000 }),
-        withRetry(() => getLifetimeLeaderboard(), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getDailyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getLifetimeLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
       ])
       
       console.log('Leaderboard data fetched:', { daily: daily.length, lifetime: lifetime.length })
@@ -203,7 +203,7 @@ export default function Leaderboard() {
         setSelectedUser(null)
         // If it's a permission error, show helpful message
         if (err?.message?.includes('permission') || err?.message?.includes('policy') || err?.message?.includes('RLS')) {
-          console.error('Permission denied. Please run fix-view-user-tasks.sql in Supabase SQL Editor to allow viewing user tasks.')
+          console.error('Permission denied. Please run fix-view-user-tasks.sql and fix-view-user-inventory.sql in Supabase SQL Editor to allow viewing user tasks and inventory.')
         }
       }
     } finally {

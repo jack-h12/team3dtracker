@@ -41,12 +41,18 @@ export async function sendFriendRequest(senderId: string, receiverId: string): P
   return data
 }
 
-export async function getFriendRequests(userId: string): Promise<FriendRequest[]> {
-  const { data, error } = await supabase
+export async function getFriendRequests(userId: string, signal?: AbortSignal): Promise<FriendRequest[]> {
+  const query = supabase
     .from('friend_requests')
     .select('*')
     .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
     .order('created_at', { ascending: false })
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   return data || []
@@ -70,12 +76,18 @@ export async function rejectFriendRequest(requestId: string): Promise<void> {
   if (error) throw error
 }
 
-export async function getFriends(userId: string): Promise<FriendRequest[]> {
-  const { data, error } = await supabase
+export async function getFriends(userId: string, signal?: AbortSignal): Promise<FriendRequest[]> {
+  const query = supabase
     .from('friend_requests')
     .select('*')
     .eq('status', 'accepted')
     .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   return data || []

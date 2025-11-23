@@ -54,46 +54,42 @@ export default function Home() {
       // Note: process.env.NEXT_PUBLIC_* vars are replaced at build time by Next.js
       // They're available in both client and server, but we check here for safety
       
-      // Get session with timeout to detect hanging requests
+      // Get session with aggressive timeout detection
+      // If this hangs, it means the Supabase client is stuck - we need to clear everything
       let session: any = null
       let sessionError: any = null
+      let timedOut = false
+      
+      const sessionPromise = supabase.auth.getSession()
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          timedOut = true
+          reject(new Error('Session check timeout'))
+        }, 5000) // 5 second timeout
+      })
       
       try {
-        const result = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<{ data: { session: null }, error: { message: 'Timeout' } }>((resolve) =>
-            setTimeout(() => resolve({ data: { session: null }, error: { message: 'Timeout' } }), 5000)
-          )
-        ]) as { data: { session: any }, error: any }
-        
+        const result = await Promise.race([sessionPromise, timeoutPromise]) as { data: { session: any }, error: any }
         session = result.data?.session
         sessionError = result.error
       } catch (err: any) {
-        console.error('Session check timed out or failed:', err)
-        // If session check hangs, clear stale data and try once more
-        if (err?.message === 'Timeout' || err?.message?.includes('timeout')) {
-          console.warn('Session check timed out - clearing stale data and retrying...')
+        if (timedOut) {
+          // Session check is hanging - this is the core problem
+          // The Supabase client is stuck, likely due to corrupted localStorage
+          console.error('CRITICAL: Session check is hanging - clearing corrupted session data and reloading')
+          
+          // Immediately clear all Supabase session data
           forceResetSupabaseClient()
           
-          // Wait a moment, then try once more
-          await new Promise(resolve => setTimeout(resolve, 1000))
-          try {
-            const retryResult = await Promise.race([
-              supabase.auth.getSession(),
-              new Promise<{ data: { session: null }, error: { message: 'Timeout' } }>((resolve) =>
-                setTimeout(() => resolve({ data: { session: null }, error: { message: 'Timeout' } }), 5000)
-              )
-            ]) as { data: { session: any }, error: any }
-            session = retryResult.data?.session
-            sessionError = retryResult.error
-          } catch (retryErr) {
-            console.error('Retry also failed - forcing page reload')
-            // If retry also fails, force a hard reload to clear everything
-            if (typeof window !== 'undefined') {
-              window.location.reload()
-            }
-            return
+          // Wait a moment for cleanup
+          await new Promise(resolve => setTimeout(resolve, 500))
+          
+          // Force a hard reload to start completely fresh
+          if (typeof window !== 'undefined') {
+            // Use replace instead of reload to avoid going through history
+            window.location.replace(window.location.href)
           }
+          return
         } else {
           sessionError = err
         }
@@ -123,14 +119,39 @@ export default function Home() {
     } catch (err) {
       console.error('Error initializing auth:', err)
       setLoading(false)
+      // If initAuth fails completely, clear any potentially corrupted data
+      if (err && typeof err === 'object' && 'message' in err && 
+          (err.message === 'Session check timeout' || String(err.message).includes('timeout'))) {
+        console.warn('Auth init failed due to timeout - clearing session data')
+        forceResetSupabaseClient()
+      }
     }
   }
 
   useEffect(() => {
     let mounted = true
+    let loadingTimeout: NodeJS.Timeout | null = null
+    
+    // Watchdog: If loading takes too long, something is wrong
+    loadingTimeout = setTimeout(() => {
+      if (loading && mounted) {
+        console.error('CRITICAL: App stuck loading for 10+ seconds - likely hanging request')
+        console.error('Clearing session data and reloading...')
+        forceResetSupabaseClient()
+        setTimeout(() => {
+          if (typeof window !== 'undefined' && mounted) {
+            window.location.replace(window.location.href)
+          }
+        }, 500)
+      }
+    }, 10000) // 10 second watchdog
     
     // Initial auth check
-    initAuth()
+    initAuth().finally(() => {
+      if (loadingTimeout) {
+        clearTimeout(loadingTimeout)
+      }
+    })
     
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -159,8 +180,8 @@ export default function Home() {
     const handleVisibilityChange = async () => {
       if (!mounted || document.hidden) return
       
-      // Force reset to clear any stale data
-      forceResetSupabaseClient()
+      // Just reset client (don't clear localStorage unless we detect a problem)
+      resetSupabaseClient()
       await new Promise(resolve => setTimeout(resolve, 2000))
       
       if (!mounted || document.hidden) return
@@ -182,9 +203,12 @@ export default function Home() {
         if (!mounted) return
         
         if (error) {
-          // If we get a timeout, force a page reload to clear everything
+          // Only clear data and reload if we get a timeout (hanging request)
           if (error.message === 'Timeout') {
-            console.error('Session check timed out after tab switch - forcing page reload')
+            console.error('Session check timed out after tab switch - clearing stale data and reloading')
+            forceResetSupabaseClient()
+            // Wait a moment for cleanup
+            await new Promise(resolve => setTimeout(resolve, 500))
             if (typeof window !== 'undefined') {
               window.location.reload()
             }

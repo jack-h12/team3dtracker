@@ -15,12 +15,18 @@
 import { supabase } from './supabase'
 import type { Profile, Task } from './supabase'
 
-export async function getDailyLeaderboard(): Promise<Profile[]> {
-  const { data, error } = await supabase
+export async function getDailyLeaderboard(signal?: AbortSignal): Promise<Profile[]> {
+  const query = supabase
     .from('profiles')
     .select('*')
     .order('avatar_level', { ascending: false })
     .limit(100)
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   
@@ -37,12 +43,18 @@ export async function getDailyLeaderboard(): Promise<Profile[]> {
   return sorted
 }
 
-export async function getLifetimeLeaderboard(): Promise<Profile[]> {
-  const { data, error } = await supabase
+export async function getLifetimeLeaderboard(signal?: AbortSignal): Promise<Profile[]> {
+  const query = supabase
     .from('profiles')
     .select('*')
     .order('lifetime_exp', { ascending: false })
     .limit(100)
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   
@@ -59,12 +71,18 @@ export async function getLifetimeLeaderboard(): Promise<Profile[]> {
   return sorted
 }
 
-export async function getUserTasks(userId: string): Promise<Task[]> {
-  const { data, error } = await supabase
+export async function getUserTasks(userId: string, signal?: AbortSignal): Promise<Task[]> {
+  const query = supabase
     .from('tasks')
     .select('*')
     .eq('user_id', userId)
     .order('task_order', { ascending: true })
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   return data || []

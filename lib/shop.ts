@@ -17,11 +17,17 @@
 import { supabase } from './supabase'
 import type { ShopItem, UserInventory, Profile } from './supabase'
 
-export async function getShopItems(): Promise<ShopItem[]> {
-  const { data, error } = await supabase
+export async function getShopItems(signal?: AbortSignal): Promise<ShopItem[]> {
+  const query = supabase
     .from('shop_items')
     .select('*')
     .order('cost', { ascending: true })
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   return data || []
@@ -122,14 +128,20 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
   }
 }
 
-export async function getUserInventory(userId: string): Promise<(UserInventory & { item: ShopItem })[]> {
-  const { data, error } = await supabase
+export async function getUserInventory(userId: string, signal?: AbortSignal): Promise<(UserInventory & { item: ShopItem })[]> {
+  const query = supabase
     .from('user_inventory')
     .select(`
       *,
       item:shop_items(*)
     `)
     .eq('user_id', userId)
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
   return data?.map((inv: any) => ({

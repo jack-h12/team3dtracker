@@ -12,8 +12,12 @@ import { supabase, resetSupabaseClient, abortAllPendingRequests } from './supaba
 /**
  * Wraps a Supabase request with timeout and retry logic
  */
+type RetryContext = {
+  signal: AbortSignal
+}
+
 export async function withRetry<T>(
-  requestFn: () => Promise<T>,
+  requestFn: (context: RetryContext) => Promise<T>,
   options: {
     maxRetries?: number
     timeout?: number
@@ -23,41 +27,41 @@ export async function withRetry<T>(
   const { maxRetries = 3, timeout = 10000, retryDelay = 1000 } = options
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController()
+    let timedOut = false
+    const timeoutId = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeout)
+
     try {
-      // Create a timeout promise
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Request timeout')), timeout)
-      })
-
-      // Race between the request and timeout
-      const result = await Promise.race([
-        requestFn(),
-        timeoutPromise
-      ])
-
+      const result = await requestFn({ signal: controller.signal })
+      clearTimeout(timeoutId)
       return result
     } catch (error: any) {
-      const isLastAttempt = attempt === maxRetries
-      const isTimeout = error?.message === 'Request timeout'
-      const isNetworkError = error?.message?.includes('fetch') || error?.code === 'ECONNABORTED'
+      clearTimeout(timeoutId)
 
-      console.warn(`Request attempt ${attempt + 1} failed:`, error?.message || error)
+      const isLastAttempt = attempt === maxRetries
+      const isAbortError = error?.name === 'AbortError' || error?.message === 'Request aborted'
+      const normalizedError = timedOut && isAbortError ? new Error('Request timeout') : error
+      const isTimeout = normalizedError?.message === 'Request timeout'
+      const isNetworkError =
+        normalizedError?.message?.includes('fetch') || normalizedError?.code === 'ECONNABORTED'
+
+      console.warn(`Request attempt ${attempt + 1} failed:`, normalizedError?.message || normalizedError)
 
       if (isLastAttempt) {
-        throw error
+        throw normalizedError
       }
 
-      // Only retry on timeout or network errors
       if (isTimeout || isNetworkError) {
-        // Exponential backoff
         const delay = retryDelay * Math.pow(2, attempt)
         console.log(`Retrying in ${delay}ms...`)
         await new Promise(resolve => setTimeout(resolve, delay))
         continue
       }
 
-      // Don't retry on other errors (auth errors, validation errors, etc.)
-      throw error
+      throw normalizedError
     }
   }
 

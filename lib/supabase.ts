@@ -11,6 +11,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Get env vars - Next.js replaces NEXT_PUBLIC_* vars at build time
 // They're available in both browser and server contexts
@@ -25,8 +26,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
   }
 }
 
-// Create a singleton client instance
-let supabaseClient: ReturnType<typeof createClient> | null = null
+// Track the active client so we can fully reset/replace it when needed
+let supabaseClient: SupabaseClient | null = null
 let activeAbortControllers = new Set<AbortController>()
 
 /**
@@ -90,21 +91,30 @@ function createAbortableFetch() {
 /**
  * Clears stale Supabase session data from localStorage
  * This helps recover from persistent connection issues
+ * Only clears auth tokens, preserves other app data
  */
 export function clearStaleSessionData() {
   if (typeof window === 'undefined') return
   
   try {
     const keys = Object.keys(localStorage)
+    let clearedCount = 0
     keys.forEach(key => {
-      // Clear all Supabase auth-related keys
-      if (key.startsWith('supabase.auth.token') || 
-          key.startsWith('sb-') ||
-          key.includes('supabase') && key.includes('auth')) {
+      // Clear only Supabase auth token keys (not other app data)
+      // Supabase stores tokens with pattern: sb-<project-ref>-auth-token
+      if (key.startsWith('sb-') && key.includes('-auth-token')) {
         localStorage.removeItem(key)
+        clearedCount++
+      }
+      // Also clear old format if it exists
+      if (key.startsWith('supabase.auth.token')) {
+        localStorage.removeItem(key)
+        clearedCount++
       }
     })
-    console.log('Cleared stale Supabase session data from localStorage')
+    if (clearedCount > 0) {
+      console.log(`Cleared ${clearedCount} stale Supabase session token(s) from localStorage`)
+    }
   } catch (e) {
     console.warn('Error clearing localStorage:', e)
   }
@@ -114,7 +124,7 @@ export function clearStaleSessionData() {
  * Resets the Supabase client - forces a fresh connection on the next request
  */
 export function resetSupabaseClient() {
-  // Abort all pending requests first
+  // Abort all pending requests first so we don't leave dangling fetches
   abortAllPendingRequests()
   
   if (supabaseClient) {
@@ -127,7 +137,10 @@ export function resetSupabaseClient() {
       // Ignore errors
     }
   }
+  
+  // Drop the existing reference and build a fresh client
   supabaseClient = null
+  supabase = createSupabaseClient()
 }
 
 /**
@@ -139,11 +152,7 @@ export function forceResetSupabaseClient() {
   resetSupabaseClient()
 }
 
-export const supabase = (() => {
-  if (supabaseClient) {
-    return supabaseClient
-  }
-
+function createSupabaseClient(): SupabaseClient {
   // Use env vars directly - fallback to placeholder only if truly missing
   const url = supabaseUrl || 'https://placeholder.supabase.co'
   const key = supabaseAnonKey || 'placeholder-key'
@@ -165,18 +174,24 @@ export const supabase = (() => {
     }
   }
 
-  supabaseClient = createClient(url, key, {
+  const client = createClient(url, key, {
     auth: {
       persistSession: typeof window !== 'undefined',
       autoRefreshToken: typeof window !== 'undefined',
       detectSessionInUrl: typeof window !== 'undefined',
       storage: typeof window !== 'undefined' ? window.localStorage : undefined,
       flowType: 'pkce'
+    },
+    global: {
+      fetch: createAbortableFetch()
     }
   })
 
-  return supabaseClient
-})()
+  supabaseClient = client
+  return client
+}
+
+export let supabase = createSupabaseClient()
 
 // Helper function to get display name (display_name if set, otherwise username)
 export function getDisplayName(profile: Profile | null | undefined): string {

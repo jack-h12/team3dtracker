@@ -73,12 +73,17 @@ export async function checkAndAwardEliteStatus(userId: string): Promise<boolean>
   return false
 }
 
-export async function isEliteUser(userId: string): Promise<boolean> {
-  const { data, error } = await supabase
+export async function isEliteUser(userId: string, signal?: AbortSignal): Promise<boolean> {
+  let query = supabase
     .from('profiles')
     .select('first_completed_all_tasks_at')
     .eq('id', userId)
-    .single()
+
+  if (signal) {
+    query = query.abortSignal(signal)
+  }
+
+  const { data, error } = await query.single()
 
   if (error || !data) return false
   const typedData = data as { first_completed_all_tasks_at: string | null }

@@ -54,9 +54,9 @@ export default function Friends({ userId }: FriendsProps) {
     }
     try {
       const [reqs, frs, users] = await Promise.all([
-        withRetry(() => getFriendRequests(userId), { maxRetries: 3, timeout: 15000 }),
-        withRetry(() => getFriends(userId), { maxRetries: 3, timeout: 15000 }),
-        withRetry(() => getDailyLeaderboard(), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getFriendRequests(userId, signal), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getFriends(userId, signal), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getDailyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
       ])
       
       if (mountedRef.current) {
