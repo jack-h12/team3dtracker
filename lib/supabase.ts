@@ -28,65 +28,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Track the active client so we can fully reset/replace it when needed
 let supabaseClient: SupabaseClient | null = null
-let activeAbortControllers = new Set<AbortController>()
-
-/**
- * Aborts all pending requests - critical for fixing hanging requests after tab switches
- */
-export function abortAllPendingRequests() {
-  if (typeof window === 'undefined') return
-  
-  activeAbortControllers.forEach(controller => {
-    try {
-      controller.abort()
-    } catch (e) {
-      // Ignore errors
-    }
-  })
-  activeAbortControllers.clear()
-}
-
-/**
- * Creates a custom fetch that can be aborted
- */
-function createAbortableFetch() {
-  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const controller = new AbortController()
-    activeAbortControllers.add(controller)
-    
-    // Merge abort signals
-    const signal = init?.signal 
-      ? (() => {
-          const merged = new AbortController()
-          init.signal?.addEventListener('abort', () => merged.abort())
-          controller.signal.addEventListener('abort', () => merged.abort())
-          return merged.signal
-        })()
-      : controller.signal
-    
-    // Add timeout
-    const timeoutId = setTimeout(() => controller.abort(), 20000)
-    
-    try {
-      const response = await fetch(input, {
-        ...init,
-        signal,
-        cache: 'no-store',
-        keepalive: false,
-      })
-      clearTimeout(timeoutId)
-      activeAbortControllers.delete(controller)
-      return response
-    } catch (error: any) {
-      clearTimeout(timeoutId)
-      activeAbortControllers.delete(controller)
-      if (error.name === 'AbortError' || controller.signal.aborted) {
-        throw new Error('Request aborted')
-      }
-      throw error
-    }
-  }
-}
+let isResettingClient = false
+let lastResetTimestamp = 0
+const RESET_THROTTLE_MS = 2000
 
 /**
  * Clears stale Supabase session data from localStorage
@@ -123,24 +67,41 @@ export function clearStaleSessionData() {
 /**
  * Resets the Supabase client - forces a fresh connection on the next request
  */
-export function resetSupabaseClient() {
-  // Abort all pending requests first so we don't leave dangling fetches
-  abortAllPendingRequests()
-  
-  if (supabaseClient) {
-    try {
-      // Only disconnect realtime if we're in browser and it's connected
-      if (typeof window !== 'undefined' && supabaseClient.realtime) {
-        supabaseClient.realtime.disconnect()
-      }
-    } catch (e) {
-      // Ignore errors
+export function resetSupabaseClient(options?: { force?: boolean }) {
+  const now = Date.now()
+  if (!options?.force) {
+    if (isResettingClient) {
+      return
+    }
+    if (now - lastResetTimestamp < RESET_THROTTLE_MS) {
+      return
     }
   }
-  
-  // Drop the existing reference and build a fresh client
-  supabaseClient = null
-  supabase = createSupabaseClient()
+
+  isResettingClient = true
+  lastResetTimestamp = now
+
+  try {
+    if (supabaseClient) {
+      try {
+        // Only disconnect realtime if we're in browser and it's connected
+        if (typeof window !== 'undefined' && supabaseClient.realtime) {
+          supabaseClient.realtime.disconnect()
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
+    // Drop the existing reference and build a fresh client
+    supabaseClient = null
+    supabase = createSupabaseClient()
+  } finally {
+    isResettingClient = false
+    if (options?.force) {
+      lastResetTimestamp = Date.now()
+    }
+  }
 }
 
 /**
@@ -149,7 +110,7 @@ export function resetSupabaseClient() {
  */
 export function forceResetSupabaseClient() {
   clearStaleSessionData()
-  resetSupabaseClient()
+  resetSupabaseClient({ force: true })
 }
 
 function createSupabaseClient(): SupabaseClient {
@@ -181,9 +142,6 @@ function createSupabaseClient(): SupabaseClient {
       detectSessionInUrl: typeof window !== 'undefined',
       storage: typeof window !== 'undefined' ? window.localStorage : undefined,
       flowType: 'pkce'
-    },
-    global: {
-      fetch: createAbortableFetch()
     }
   })
 
@@ -248,4 +206,3 @@ export type UserInventory = {
   quantity: number
   expires_at?: string | null // Expiration date for armour items (2 weeks from purchase)
 }
-

@@ -7,7 +7,7 @@
  * - Tab visibility issues
  */
 
-import { supabase, resetSupabaseClient, abortAllPendingRequests } from './supabase'
+import { supabase } from './supabase'
 
 /**
  * Wraps a Supabase request with timeout and retry logic
@@ -104,12 +104,25 @@ export async function refreshSession(): Promise<void> {
       return
     }
     
-    const { data: { session } } = await supabase.auth.getSession()
+    const { data: { session }, error } = await supabase.auth.getSession()
+    
+    if (error) {
+      // If error, don't try to refresh - session might be invalid
+      return
+    }
+    
     if (session) {
-      await Promise.race([
-        supabase.auth.refreshSession(session),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ])
+      // Use a race condition to prevent infinite hanging, but don't treat timeout as error
+      // Just let the background refresh happen
+      try {
+        await Promise.race([
+          supabase.auth.refreshSession(session),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
+        ])
+      } catch (e) {
+        // Ignore timeout, refresh might still complete in background
+        console.log('Session refresh timed out or failed, continuing...')
+      }
     }
   } catch (err) {
     // Ignore errors - session might still be valid

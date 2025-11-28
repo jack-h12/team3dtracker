@@ -74,21 +74,11 @@ export default function Home() {
         sessionError = result.error
       } catch (err: any) {
         if (timedOut) {
-          // Session check is hanging - this is the core problem
-          // The Supabase client is stuck, likely due to corrupted localStorage
-          console.error('CRITICAL: Session check is hanging - clearing corrupted session data and reloading')
-          
-          // Immediately clear all Supabase session data
-          forceResetSupabaseClient()
-          
-          // Wait a moment for cleanup
-          await new Promise(resolve => setTimeout(resolve, 500))
-          
-          // Force a hard reload to start completely fresh
-          if (typeof window !== 'undefined') {
-            // Use replace instead of reload to avoid going through history
-            window.location.replace(window.location.href)
-          }
+          // Session check timed out - this might be a temporary network blip
+          console.warn('Session check timed out - proceeding with soft failure')
+          // Don't force reset - that logs the user out!
+          // Just set loading to false so the UI can show something (or the user can retry)
+          setLoading(false)
           return
         } else {
           sessionError = err
@@ -119,11 +109,10 @@ export default function Home() {
     } catch (err) {
       console.error('Error initializing auth:', err)
       setLoading(false)
-      // If initAuth fails completely, clear any potentially corrupted data
+      // If initAuth fails completely, don't force reset - just log
       if (err && typeof err === 'object' && 'message' in err && 
           (err.message === 'Session check timeout' || String(err.message).includes('timeout'))) {
-        console.warn('Auth init failed due to timeout - clearing session data')
-        forceResetSupabaseClient()
+        console.warn('Auth init failed due to timeout')
       }
     }
   }
@@ -135,14 +124,15 @@ export default function Home() {
     // Watchdog: If loading takes too long, something is wrong
     loadingTimeout = setTimeout(() => {
       if (loading && mounted) {
-        console.error('CRITICAL: App stuck loading for 10+ seconds - likely hanging request')
-        console.error('Clearing session data and reloading...')
-        forceResetSupabaseClient()
+        console.warn('App stuck loading for 10+ seconds - trying soft reset')
+        // Just reset the client instance in memory, don't clear storage
+        resetSupabaseClient()
+        // Reload page as last resort but don't clear session
         setTimeout(() => {
           if (typeof window !== 'undefined' && mounted) {
-            window.location.replace(window.location.href)
+            window.location.reload()
           }
-        }, 500)
+        }, 1000)
       }
     }, 10000) // 10 second watchdog
     
@@ -180,90 +170,44 @@ export default function Home() {
     const handleVisibilityChange = async () => {
       if (!mounted || document.hidden) return
       
-      // Just reset client (don't clear localStorage unless we detect a problem)
-      resetSupabaseClient()
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Wait a moment for network to reconnect
+      await new Promise(resolve => setTimeout(resolve, 1000))
       
       if (!mounted || document.hidden) return
       
       // Refresh session in background
       refreshSession().catch(() => {})
       
-      if (!mounted) return
-      
-      // Try to get the current session (with timeout) to refresh user data
+      // Try to get the current session to refresh user data
       try {
-        const { data: { session }, error } = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<{ data: { session: null }, error: { message: 'Timeout' } }>((resolve) =>
-            setTimeout(() => resolve({ data: { session: null }, error: { message: 'Timeout' } }), 5000)
-          )
-        ]) as { data: { session: any }, error: any }
+        const { data: { session }, error } = await supabase.auth.getSession()
         
         if (!mounted) return
         
         if (error) {
-          // Only clear data and reload if we get a timeout (hanging request)
-          if (error.message === 'Timeout') {
-            console.error('Session check timed out after tab switch - clearing stale data and reloading')
-            forceResetSupabaseClient()
-            // Wait a moment for cleanup
-            await new Promise(resolve => setTimeout(resolve, 500))
-            if (typeof window !== 'undefined') {
-              window.location.reload()
-            }
-            return
-          }
-          // Other errors - might be network issue, but don't clear user state
           console.warn('Could not get session after tab switch:', error.message || error)
           return
         }
         
         if (session?.user) {
           // Silently refresh user data when tab becomes active
-          // Always refresh to keep data up to date, React won't re-render if values are the same
           setUser(session.user)
           try {
-            const userProfile = await Promise.race([
-              getCurrentProfile(),
-              new Promise<Profile | null>((resolve) => setTimeout(() => resolve(null), 5000))
-            ])
+            const userProfile = await getCurrentProfile()
             if (userProfile && mounted) {
               setProfile(userProfile)
               try {
-                const adminStatus = await Promise.race([
-                  isAdmin(session.user.id),
-                  new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000))
-                ])
+                const adminStatus = await isAdmin(session.user.id)
                 if (mounted) setUserIsAdmin(adminStatus)
               } catch (adminErr) {
                 // Ignore admin check errors
               }
             }
           } catch (profileErr) {
-            // Ignore profile refresh errors - data might still be valid
-            console.warn('Could not refresh profile after tab switch:', profileErr)
+            // Ignore profile refresh errors
           }
-        } else {
-          // No session - user might be logged out, but don't clear state immediately
-          // Wait a bit in case network isn't ready yet
-          setTimeout(async () => {
-            if (mounted) {
-              try {
-                const { data: { session: retrySession } } = await supabase.auth.getSession()
-                if (!retrySession && mounted) {
-                  setUser(null)
-                  setProfile(null)
-                  setUserIsAdmin(false)
-                }
-              } catch (retryErr) {
-                // Ignore retry errors
-              }
-            }
-          }, 2000)
         }
       } catch (err) {
-        // Ignore errors - session might still be valid, just network issue
         console.warn('Error handling visibility change:', err)
       }
     }

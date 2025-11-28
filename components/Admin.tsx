@@ -34,7 +34,6 @@ import { getDisplayName } from '@/lib/supabase'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage } from '@/lib/utils'
 import { refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
-import { resetSupabaseClient, abortAllPendingRequests } from '@/lib/supabase'
 import type { Profile } from '@/lib/supabase'
 
 interface AdminProps {
@@ -93,8 +92,6 @@ export default function Admin({ userId }: AdminProps) {
     // If tab was recently hidden, reset client before first load
     const initializeAndLoad = async () => {
       if (wasTabRecentlyHidden()) {
-        abortAllPendingRequests()
-        resetSupabaseClient()
         await new Promise(resolve => setTimeout(resolve, 2000))
       }
       if (mountedRef.current) {
@@ -106,9 +103,6 @@ export default function Admin({ userId }: AdminProps) {
     // Refresh data when tab becomes visible
     const handleVisibilityChange = async () => {
       if (document.hidden || !mountedRef.current) return
-      
-      abortAllPendingRequests()
-      resetSupabaseClient()
       
       await new Promise(resolve => setTimeout(resolve, 2000))
       

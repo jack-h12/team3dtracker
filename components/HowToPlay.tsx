@@ -115,11 +115,8 @@ export default function HowToPlay() {
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>🧪 POTIONS</strong> - Give you temporary immunity from attacks (24h or 48h)
             </p>
-            <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>📜 NAME CHANGE SCROLL</strong> - Change someone else's displayed username (ELITE ONLY)
-            </p>
             <p style={{ margin: 0 }}>
-              <strong style={{ color: '#ff4444', fontWeight: 700 }}>⚠️ ELITE ITEMS:</strong> Only the first 3 players who complete all 10 tasks can buy weapons and name change scrolls!
+              <strong style={{ color: '#fff', fontWeight: 700 }}>📜 NAME CHANGE SCROLL</strong> - Change someone else's displayed username
             </p>
           </div>
         </div>
@@ -244,7 +241,7 @@ export default function HowToPlay() {
           </h3>
           <div style={{ color: '#ccc', fontSize: '15px', lineHeight: '1.8', fontWeight: 500 }}>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>1. Complete all 10 tasks</strong> - Be one of the first 3 to unlock elite status and buy exclusive items!
+              <strong style={{ color: '#fff', fontWeight: 700 }}>1. Complete all 10 tasks</strong> - Be one of the first 3 to unlock elite status!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>2. Choose the best armour</strong> - Only the highest protection armour piece counts, so pick the strongest one! Remember armour expires after 2 weeks!

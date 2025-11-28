@@ -20,8 +20,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getShopItems, purchaseItem, getUserInventory, useItem, getEffectDescription, getProtectionValue, getWeaponDamage } from '@/lib/shop'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
-import { getDisplayName, supabase, resetSupabaseClient, abortAllPendingRequests } from '@/lib/supabase'
-import { isEliteUser } from '@/lib/elite'
+import { getDisplayName, supabase } from '@/lib/supabase'
 import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage, getItemImage } from '@/lib/utils'
@@ -40,7 +39,6 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
   const [selectedTarget, setSelectedTarget] = useState('')
   const [customName, setCustomName] = useState('')
   const [loading, setLoading] = useState(false)
-  const [isElite, setIsElite] = useState(false)
   const [showAttackAnimation, setShowAttackAnimation] = useState(false)
   const [attackTarget, setAttackTarget] = useState<{ avatar: string; name: string; sword: string } | null>(null)
   const isLoadingRef = useRef(false)
@@ -62,18 +60,16 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       setLoading(true)
     }
     try {
-      const [shopItems, userInv, users, eliteStatus] = await Promise.all([
+      const [shopItems, userInv, users] = await Promise.all([
         withRetry(({ signal }) => getShopItems(signal), { maxRetries: 3, timeout: 15000 }),
         withRetry(({ signal }) => getUserInventory(userId, signal), { maxRetries: 3, timeout: 15000 }),
         withRetry(({ signal }) => getDailyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
-        withRetry(({ signal }) => isEliteUser(userId, signal), { maxRetries: 3, timeout: 15000 }),
       ])
       
       if (mountedRef.current) {
         setItems(shopItems)
         setInventory(userInv)
         setAllUsers(users.filter((u) => u.id !== userId))
-        setIsElite(eliteStatus)
         // Mark that we've loaded initial data
         hasInitialDataRef.current = true
       }
@@ -97,8 +93,6 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     // If tab was recently hidden, reset client before first load
     const initializeAndLoad = async () => {
       if (wasTabRecentlyHidden()) {
-        abortAllPendingRequests()
-        resetSupabaseClient()
         await new Promise(resolve => setTimeout(resolve, 2000))
       }
       if (mountedRef.current) {
@@ -110,9 +104,6 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
     // Refresh data when tab becomes visible
     const handler = async () => {
       if (document.hidden || !mountedRef.current) return
-      
-      abortAllPendingRequests()
-      resetSupabaseClient()
       
       await new Promise(resolve => setTimeout(resolve, 2000))
       
@@ -375,17 +366,6 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                     gap: '8px'
                   }}>
                     {item.name.toUpperCase()}
-                    {(item.type === 'weapon' || item.type === 'name_change') && !isElite && (
-                      <span style={{
-                        fontSize: '12px',
-                        padding: '4px 8px',
-                        background: 'rgba(255, 68, 68, 0.2)',
-                        border: '1px solid rgba(255, 68, 68, 0.4)',
-                        borderRadius: '6px',
-                        color: '#ff4444',
-                        fontWeight: 700
-                      }}>ELITE ONLY</span>
-                    )}
                   </h4>
                   <div style={{
                     background: 'rgba(0, 0, 0, 0.3)',
@@ -455,7 +435,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         fontSize: '12px',
                         fontWeight: 600,
                         color: '#ccc',
-                        marginBottom: !isElite ? '8px' : '0'
+                        marginBottom: '8px'
                       }}>
                         <span>⚔️ DAMAGE</span>
                         <span style={{ color: '#ff4444', fontWeight: 800, fontSize: '14px' }}>
@@ -463,61 +443,44 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         </span>
                       </div>
                     )}
-                    {(item.type === 'weapon' || item.type === 'name_change') && !isElite && (
-                      <div style={{
-                        marginTop: '8px',
-                        padding: '8px',
-                        background: 'rgba(255, 68, 68, 0.1)',
-                        border: '1px solid rgba(255, 68, 68, 0.3)',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                        color: '#ff8888',
-                        fontWeight: 600,
-                        textAlign: 'center'
-                      }}>
-                        ⚠️ Only available to the first 3 users who complete all 10 tasks!
-                      </div>
-                    )}
                   </div>
                   <button
                     onClick={() => handlePurchase(item.id)}
-                    disabled={loading || ((item.type === 'weapon' || item.type === 'name_change') && !isElite)}
+                    disabled={loading}
                     style={{
                       width: '100%',
                       padding: '14px',
-                      background: loading || ((item.type === 'weapon' || item.type === 'name_change') && !isElite)
+                      background: loading
                         ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
                         : 'linear-gradient(135deg, #ffd700 0%, #ffb300 100%)',
-                      color: loading || ((item.type === 'weapon' || item.type === 'name_change') && !isElite) ? '#888' : '#000',
+                      color: loading ? '#888' : '#000',
                       border: 'none',
                       borderRadius: '10px',
-                      cursor: loading || ((item.type === 'weapon' || item.type === 'name_change') && !isElite) ? 'not-allowed' : 'pointer',
+                      cursor: loading ? 'not-allowed' : 'pointer',
                       fontWeight: 800,
                       fontSize: '16px',
                       transition: 'all 0.3s ease',
-                      boxShadow: loading || ((item.type === 'weapon' || item.type === 'name_change') && !isElite) ? 'none' : '0 4px 15px rgba(255, 215, 0, 0.4)',
+                      boxShadow: loading ? 'none' : '0 4px 15px rgba(255, 215, 0, 0.4)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       gap: '8px'
                     }}
                     onMouseEnter={(e) => {
-                      if (!loading && !((item.type === 'weapon' || item.type === 'name_change') && !isElite)) {
+                      if (!loading) {
                         e.currentTarget.style.transform = 'translateY(-2px)'
                         e.currentTarget.style.boxShadow = '0 6px 20px rgba(255, 215, 0, 0.5)'
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (!loading && !((item.type === 'weapon' || item.type === 'name_change') && !isElite)) {
+                      if (!loading) {
                         e.currentTarget.style.transform = 'translateY(0)'
                         e.currentTarget.style.boxShadow = '0 4px 15px rgba(255, 215, 0, 0.4)'
                       }
                     }}
                   >
                     <span>💰</span> 
-                    {(item.type === 'weapon' || item.type === 'name_change') && !isElite 
-                      ? 'ELITE ONLY' 
-                      : `${item.cost} GOLD`}
+                    {`${item.cost} GOLD`}
                   </button>
                 </div>
               )

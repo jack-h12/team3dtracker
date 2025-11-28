@@ -46,19 +46,6 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
   // Type assertion
   const typedItem = item as ShopItem
 
-  // Check if item is restricted (weapon or name_change)
-  const isRestricted = typedItem.type === 'weapon' || typedItem.type === 'name_change'
-  
-  if (isRestricted) {
-    // Check if user has elite status (first 3 to complete all tasks)
-    const { canPurchaseRestrictedItem } = await import('./elite')
-    const canPurchase = await canPurchaseRestrictedItem(userId)
-    
-    if (!canPurchase) {
-      throw new Error('Only the first 3 users who complete all 10 tasks can purchase this item!')
-    }
-  }
-
   // Get user profile
   const { data: profile, error: profileError } = await supabase
     .from('profiles')

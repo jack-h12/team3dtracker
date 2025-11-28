@@ -20,7 +20,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { getTodayTasks, addTask, completeTask, deleteTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
 import { getCurrentProfile } from '@/lib/auth'
 import { showModal } from '@/lib/modal'
-import { supabase, resetSupabaseClient, abortAllPendingRequests } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import type { Task, Profile } from '@/lib/supabase'
 
@@ -234,9 +234,8 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     // If tab was recently hidden, reset client before first load
     const initializeAndLoad = async () => {
       if (wasTabRecentlyHidden()) {
-        abortAllPendingRequests()
-        resetSupabaseClient()
-        await new Promise(resolve => setTimeout(resolve, 1500))
+        // Give the root page time to refresh the Supabase client after a tab switch
+        await new Promise(resolve => setTimeout(resolve, 500))
       }
       if (mountedRef.current) {
         loadTasks(true)
@@ -255,17 +254,10 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     const handleVisibilityChange = async () => {
       if (document.hidden || !mountedRef.current) return
       
-      console.log('Tasks: Tab visible, aborting requests and resetting...')
-      
-      // CRITICAL: Abort all pending requests first
-      abortAllPendingRequests()
-      
-      // Reset client to force fresh connections
-      resetSupabaseClient()
-      
-      // Wait longer for network to be ready after tab switch
-      // Browsers need time to restore network connections
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      console.log('Tasks: Tab visible, refreshing data...')
+
+      // Wait a moment for network to reconnect
+      await new Promise(resolve => setTimeout(resolve, 500))
       
       if (document.hidden || !mountedRef.current) return
       
@@ -278,13 +270,11 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       // Refresh session (non-blocking)
       refreshSession().catch(() => {})
       
-      // Wait additional time for session refresh, then load data
-      setTimeout(() => {
-        if (!document.hidden && mountedRef.current && loadTasksRef.current) {
-          console.log('Tasks: Loading data after tab switch...')
-          loadTasksRef.current(false, true)
-        }
-      }, 1500)
+      // Load data
+      if (mountedRef.current && loadTasksRef.current) {
+        console.log('Tasks: Loading data after tab switch...')
+        loadTasksRef.current(false, true)
+      }
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
