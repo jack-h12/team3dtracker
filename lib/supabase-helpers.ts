@@ -29,22 +29,33 @@ export async function withRetry<T>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController()
     let timedOut = false
-    const timeoutId = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeout)
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+    // Use Promise.race so the timeout ALWAYS works, even if the request is
+    // stuck pre-fetch (e.g. waiting for Supabase's internal auth lock).
+    // AbortController.abort() only kills an in-flight fetch — it can't
+    // unblock code that hasn't reached fetch() yet.
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+        reject(new Error('Request timeout'))
+      }, timeout)
+    })
 
     try {
-      const result = await requestFn({ signal: controller.signal })
+      const result = await Promise.race([
+        requestFn({ signal: controller.signal }),
+        timeoutPromise
+      ])
       clearTimeout(timeoutId)
       return result
     } catch (error: any) {
       clearTimeout(timeoutId)
 
       const isLastAttempt = attempt === maxRetries
-      const isAbortError = error?.name === 'AbortError' || error?.message === 'Request aborted'
-      const normalizedError = timedOut && isAbortError ? new Error('Request timeout') : error
-      const isTimeout = normalizedError?.message === 'Request timeout'
+      const isTimeout = timedOut || error?.message === 'Request timeout'
+      const normalizedError = isTimeout ? new Error('Request timeout') : error
       const isNetworkError =
         normalizedError?.message?.includes('fetch') || normalizedError?.code === 'ECONNABORTED'
 

@@ -18,7 +18,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase, resetSupabaseClient, forceResetSupabaseClient } from '@/lib/supabase'
 import { getCurrentUser, getCurrentProfile, signOut } from '@/lib/auth'
 import { shouldResetTasks, resetDailyTasks } from '@/lib/tasks'
-import { refreshSession } from '@/lib/supabase-helpers'
 import Auth from '@/components/Auth'
 import Tasks from '@/components/Tasks'
 import Avatar from '@/components/Avatar'
@@ -166,53 +165,34 @@ export default function Home() {
       }
     })
 
-    // Handle visibility change - wait for network to be ready, then refresh
+    // Session recovery on tab switch is handled by the module-level
+    // visibilitychange listener in lib/supabase.ts (startAutoRefresh /
+    // stopAutoRefresh).  This component just refreshes profile data
+    // once Supabase has had a chance to recover the session.
     const handleVisibilityChange = async () => {
       if (!mounted || document.hidden) return
-      
-      // Wait a moment for network to reconnect
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
+
+      // Give the module-level listener time to kick off the session refresh
+      await new Promise(resolve => setTimeout(resolve, 1500))
+
       if (!mounted || document.hidden) return
-      
-      // Refresh session in background
-      refreshSession().catch(() => {})
-      
-      // Try to get the current session to refresh user data
+
       try {
-        const { data: { session }, error } = await supabase.auth.getSession()
-        
-        if (!mounted) return
-        
-        if (error) {
-          console.warn('Could not get session after tab switch:', error.message || error)
-          return
-        }
-        
-        if (session?.user) {
-          // Silently refresh user data when tab becomes active
-          setUser(session.user)
-          try {
-            const userProfile = await getCurrentProfile()
-            if (userProfile && mounted) {
-              setProfile(userProfile)
-              try {
-                const adminStatus = await isAdmin(session.user.id)
-                if (mounted) setUserIsAdmin(adminStatus)
-              } catch (adminErr) {
-                // Ignore admin check errors
-              }
-            }
-          } catch (profileErr) {
-            // Ignore profile refresh errors
-          }
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!mounted || !session?.user) return
+
+        setUser(session.user)
+        const userProfile = await getCurrentProfile()
+        if (userProfile && mounted) {
+          setProfile(userProfile)
+          const adminStatus = await isAdmin(session.user.id)
+          if (mounted) setUserIsAdmin(adminStatus)
         }
       } catch (err) {
-        console.warn('Error handling visibility change:', err)
+        console.warn('Error refreshing profile after tab switch:', err)
       }
     }
 
-    // Only use visibilitychange - focus event is redundant and causes duplicate calls
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {

@@ -283,18 +283,6 @@ export default function AttackAnimation({
         </div>
       </div>
 
-      {/* Auto-close after animation */}
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-            setTimeout(() => {
-              if (typeof onComplete === 'function') {
-                onComplete();
-              }
-            }, 1500);
-          `
-        }}
-      />
     </div>
   )
 }

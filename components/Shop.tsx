@@ -21,7 +21,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getShopItems, purchaseItem, getUserInventory, useItem, getEffectDescription, getProtectionValue, getWeaponDamage } from '@/lib/shop'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
 import { getDisplayName, supabase } from '@/lib/supabase'
-import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
+import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage, getItemImage } from '@/lib/utils'
 import AttackAnimation from '@/components/AttackAnimation'
@@ -113,11 +113,10 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
         return
       }
       
-      refreshSession().catch(() => {})
-      
       setTimeout(() => {
         if (!document.hidden && mountedRef.current) {
-          loadData(true)
+          isLoadingRef.current = false
+          loadData(!hasInitialDataRef.current ? false : true)
         }
       }, 1500)
     }

@@ -124,7 +124,7 @@ function createSupabaseClient(): SupabaseClient {
     if (url.includes('placeholder') || key.includes('placeholder')) {
       console.error('Supabase not configured properly. Using placeholder values. The app will not work until environment variables are set.')
     }
-    
+
     // Log for debugging (only in development)
     if (process.env.NODE_ENV === 'development') {
       console.log('Supabase initialized:', {
@@ -141,7 +141,44 @@ function createSupabaseClient(): SupabaseClient {
       autoRefreshToken: typeof window !== 'undefined',
       detectSessionInUrl: typeof window !== 'undefined',
       storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-      flowType: 'pkce'
+      flowType: 'pkce',
+      // Bypass the Web Locks API (navigator.locks). Supabase uses it to
+      // coordinate token refreshes across browser tabs, but it causes the
+      // entire app to freeze after tab switches: the auto-refresh grabs an
+      // exclusive lock with no timeout, and every data query internally calls
+      // getSession() which waits for the same lock forever. Without the lock,
+      // the worst case is a redundant token refresh when multiple tabs are open.
+      lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => {
+        return await fn()
+      }
+    },
+    global: {
+      // Global fetch wrapper with a hard timeout. This ensures that even
+      // internal auth operations (like auto token refresh after a tab switch)
+      // can't hang forever and hold the auth lock, which would block all queries.
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const GLOBAL_TIMEOUT = 15000
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), GLOBAL_TIMEOUT)
+
+        // If the caller already has an abort signal, link it to ours
+        if (init?.signal) {
+          if (init.signal.aborted) {
+            controller.abort()
+          } else {
+            init.signal.addEventListener('abort', () => controller.abort())
+          }
+        }
+
+        try {
+          const response = await fetch(input, { ...init, signal: controller.signal })
+          clearTimeout(timeoutId)
+          return response
+        } catch (err) {
+          clearTimeout(timeoutId)
+          throw err
+        }
+      }
     }
   })
 
@@ -150,6 +187,25 @@ function createSupabaseClient(): SupabaseClient {
 }
 
 export let supabase = createSupabaseClient()
+
+// ── Tab-visibility session recovery ──────────────────────────────────
+// When the browser tab is hidden and later revealed, the Supabase auth
+// state can go stale. This single, module-level listener fires *before*
+// any component-level visibilitychange handlers (because the module is
+// imported before components mount) and tells Supabase to re-validate
+// the session so that subsequent data queries use a fresh token.
+if (typeof window !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      // startAutoRefresh re-enables the internal ticker AND runs the
+      // recovery flow that reads the session from storage, checks
+      // expiry, and refreshes the token if needed.
+      supabase.auth.startAutoRefresh()
+    } else {
+      supabase.auth.stopAutoRefresh()
+    }
+  })
+}
 
 // Helper function to get display name (display_name if set, otherwise username)
 export function getDisplayName(profile: Profile | null | undefined): string {

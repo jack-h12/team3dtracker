@@ -20,8 +20,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { getTodayTasks, addTask, completeTask, deleteTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
 import { getCurrentProfile } from '@/lib/auth'
 import { showModal } from '@/lib/modal'
-import { supabase } from '@/lib/supabase'
-import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
+import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import type { Task, Profile } from '@/lib/supabase'
 
 interface TasksProps {
@@ -148,17 +147,6 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         await handleDailyReset();
       }
 
-      // Verify session is valid before making request
-      console.log("Tasks: Checking session...");
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-      if (sessionError || !session) {
-        console.error("Tasks: Failed to load tasks: No valid session", sessionError);
-        isLoadingRef.current = false;
-        setLoading(false);
-        return;
-      }
-      console.log("Tasks: Session valid, user:", session.user?.id);
-
       // Fetch tasks with retry and timeout handling
       const taskList = await withRetry(
         ({ signal }) => getTodayTasks(userId, signal),
@@ -267,13 +255,12 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         return
       }
       
-      // Refresh session (non-blocking)
-      refreshSession().catch(() => {})
-      
-      // Load data
+      // Load data - reset stuck loading flag from background tab throttling
       if (mountedRef.current && loadTasksRef.current) {
         console.log('Tasks: Loading data after tab switch...')
-        loadTasksRef.current(false, true)
+        isLoadingRef.current = false
+        const silent = hasInitialDataRef.current
+        loadTasksRef.current(false, silent)
       }
     }
 

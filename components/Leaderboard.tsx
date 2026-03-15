@@ -18,7 +18,7 @@ import { getDailyLeaderboard, getLifetimeLeaderboard, getUserTasks } from '@/lib
 import { getUserProfile } from '@/lib/friends'
 import { getDisplayName, supabase } from '@/lib/supabase'
 import { getUserInventory, getWeaponDamage, getProtectionValue } from '@/lib/shop'
-import { withRetry, refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
+import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { getAvatarImage, getItemImage, getPotionTimeRemaining, getArmourTimeRemaining } from '@/lib/utils'
 import type { ShopItem, UserInventory } from '@/lib/supabase'
 import type { Profile, Task } from '@/lib/supabase'
@@ -36,24 +36,27 @@ export default function Leaderboard() {
   const isLoadingRef = useRef(false)
   const mountedRef = useRef(true)
   const hasInitialDataRef = useRef(false)
+  const loadedInventoryIdsRef = useRef<Set<string>>(new Set())
   // State for hover tooltips
   const [hoveredPotionUserId, setHoveredPotionUserId] = useState<string | null>(null)
   const [hoveredArmourUserId, setHoveredArmourUserId] = useState<string | null>(null)
   const [userInventories, setUserInventories] = useState<Record<string, (UserInventory & { item: ShopItem })[]>>({})
-  
+
   // Helper to load user inventory on hover for armour tooltip
   const loadUserInventoryOnHover = useCallback(async (userId: string) => {
-    if (userInventories[userId]) return // Already loaded
-    
+    if (loadedInventoryIdsRef.current.has(userId)) return // Already loaded
+
+    loadedInventoryIdsRef.current.add(userId)
     try {
       const inventory = await getUserInventory(userId)
       if (mountedRef.current) {
         setUserInventories(prev => ({ ...prev, [userId]: inventory }))
       }
     } catch (err) {
+      loadedInventoryIdsRef.current.delete(userId)
       console.error('Error loading user inventory for hover:', err)
     }
-  }, [userInventories])
+  }, [])
 
   const loadLeaderboards = useCallback(async (silent: boolean = false) => {
     // Prevent duplicate calls - skip if already loading
@@ -108,12 +111,13 @@ export default function Leaderboard() {
   // Preload inventories for top users in background (for armour display)
   useEffect(() => {
     if (!hasInitialDataRef.current) return
-    
+
     const currentUsers = activeTab === 'daily' ? dailyUsers : lifetimeUsers
     const topUsers = currentUsers.slice(0, 20) // Limit to top 20 to avoid too many API calls
-    
+
     topUsers.forEach(user => {
-      if (!userInventories[user.id]) {
+      if (!loadedInventoryIdsRef.current.has(user.id)) {
+        loadedInventoryIdsRef.current.add(user.id)
         getUserInventory(user.id)
           .then(inventory => {
             if (mountedRef.current) {
@@ -121,11 +125,12 @@ export default function Leaderboard() {
             }
           })
           .catch(() => {
+            loadedInventoryIdsRef.current.delete(user.id)
             // Silently fail - inventory will load on hover if needed
           })
       }
     })
-  }, [activeTab, dailyUsers, lifetimeUsers, userInventories])
+  }, [activeTab, dailyUsers, lifetimeUsers])
 
   useEffect(() => {
     mountedRef.current = true
@@ -154,10 +159,10 @@ export default function Leaderboard() {
         return
       }
       
-      refreshSession().catch(() => {})
-      
       if (!document.hidden && mountedRef.current) {
-        loadLeaderboards(true)
+        // Reset stuck loading flag from background tab throttling, then reload
+        isLoadingRef.current = false
+        loadLeaderboards(!hasInitialDataRef.current ? false : true)
       }
     }
 

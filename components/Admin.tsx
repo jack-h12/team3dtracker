@@ -33,7 +33,7 @@ import {
 import { getDisplayName } from '@/lib/supabase'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage } from '@/lib/utils'
-import { refreshSession, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
+import { wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import type { Profile } from '@/lib/supabase'
 
 interface AdminProps {
@@ -111,8 +111,6 @@ export default function Admin({ userId }: AdminProps) {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         return
       }
-      
-      refreshSession().catch(() => {})
       
       setTimeout(() => {
         if (!document.hidden && mountedRef.current) {
