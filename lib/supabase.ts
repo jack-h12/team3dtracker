@@ -139,7 +139,10 @@ function createSupabaseClient(): SupabaseClient {
     auth: {
       persistSession: typeof window !== 'undefined',
       autoRefreshToken: typeof window !== 'undefined',
-      detectSessionInUrl: typeof window !== 'undefined',
+      // Disabled: we handle PKCE code exchange manually in page.tsx
+      // to ensure the onAuthStateChange listener is registered first
+      // (so PASSWORD_RECOVERY events are caught).
+      detectSessionInUrl: false,
       storage: typeof window !== 'undefined' ? window.localStorage : undefined,
       flowType: 'pkce',
       // Bypass the Web Locks API (navigator.locks). Supabase uses it to

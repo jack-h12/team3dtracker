@@ -14,12 +14,12 @@ import { supabase } from './supabase'
 import type { Profile } from './supabase'
 
 export async function signUp(email: string, password: string, username: string) {
-  // Get redirect URL - use environment variable if available, otherwise try to detect
+  // Prefer the configured app URL so confirmation emails always link to production
   let redirectUrl = '/'
-  if (typeof window !== 'undefined') {
-    redirectUrl = `${window.location.origin}/`
-  } else if (process.env.NEXT_PUBLIC_APP_URL) {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
     redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL}/`
+  } else if (typeof window !== 'undefined') {
+    redirectUrl = `${window.location.origin}/`
   }
   
   // Create auth user (without metadata to avoid trigger issues)
@@ -136,11 +136,13 @@ export async function signIn(email: string, password: string) {
 }
 
 export async function resetPassword(email: string) {
+  // Prefer the configured app URL so reset emails always link to production,
+  // even if the request originated from localhost during development.
   let redirectUrl = '/'
-  if (typeof window !== 'undefined') {
-    redirectUrl = `${window.location.origin}/`
-  } else if (process.env.NEXT_PUBLIC_APP_URL) {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
     redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL}/`
+  } else if (typeof window !== 'undefined') {
+    redirectUrl = `${window.location.origin}/`
   }
 
   const { error } = await supabase.auth.resetPasswordForEmail(email, {

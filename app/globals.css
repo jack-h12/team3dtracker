@@ -83,6 +83,10 @@ a {
     display: none !important;
   }
 
+  .reset-countdown {
+    padding: 4px 8px !important;
+  }
+
   /* Sidebar - Full width overlay on mobile */
   .sidebar-mobile.menu-closed {
     display: none !important;

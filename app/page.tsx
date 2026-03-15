@@ -47,9 +47,39 @@ export default function Home() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordResetError, setPasswordResetError] = useState('')
   const [passwordResetLoading, setPasswordResetLoading] = useState(false)
+  const [resetCountdown, setResetCountdown] = useState('')
 
   useEffect(() => {
     setModalStateSetter(setModalState)
+  }, [])
+
+  // Countdown timer to 5 PM EST reset
+  useEffect(() => {
+    const updateCountdown = () => {
+      const now = new Date()
+      // Get current time in EST (America/New_York handles EST/EDT automatically)
+      const estNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }))
+      const resetTime = new Date(estNow)
+      resetTime.setHours(17, 0, 0, 0) // 5 PM
+
+      // If past 5 PM EST today, target tomorrow's 5 PM
+      if (estNow >= resetTime) {
+        resetTime.setDate(resetTime.getDate() + 1)
+      }
+
+      const diff = resetTime.getTime() - estNow.getTime()
+      const hours = Math.floor(diff / (1000 * 60 * 60))
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+
+      setResetCountdown(
+        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+      )
+    }
+
+    updateCountdown()
+    const interval = setInterval(updateCountdown, 1000)
+    return () => clearInterval(interval)
   }, [])
 
   // Function to initialize auth and load user data
@@ -124,7 +154,7 @@ export default function Home() {
   useEffect(() => {
     let mounted = true
     let loadingTimeout: NodeJS.Timeout | null = null
-    
+
     // Watchdog: If loading takes too long, something is wrong
     loadingTimeout = setTimeout(() => {
       if (loading && mounted) {
@@ -139,15 +169,9 @@ export default function Home() {
         }, 1000)
       }
     }, 10000) // 10 second watchdog
-    
-    // Initial auth check
-    initAuth().finally(() => {
-      if (loadingTimeout) {
-        clearTimeout(loadingTimeout)
-      }
-    })
-    
-    // Listen for auth changes
+
+    // Register auth state listener FIRST so we catch PASSWORD_RECOVERY events
+    // from the PKCE code exchange below
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return
 
@@ -172,6 +196,42 @@ export default function Home() {
       } catch (err) {
         console.error('Error in auth state change:', err)
       }
+    })
+
+    // Handle PKCE auth code exchange (password reset, email confirmation, etc.)
+    // With flowType: 'pkce', Supabase redirects back with a ?code= query param
+    // that must be explicitly exchanged for a session. We do this manually
+    // (detectSessionInUrl is disabled) so the listener above is ready to catch
+    // the PASSWORD_RECOVERY event.
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+
+    // Clean the code from the URL immediately to prevent reload loops
+    // (the watchdog reloads the page if loading hangs)
+    if (code) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+
+    const init = async () => {
+      if (code) {
+        try {
+          await supabase.auth.exchangeCodeForSession(code)
+          // Exchange succeeded — onAuthStateChange will fire with the
+          // correct event (PASSWORD_RECOVERY, SIGNED_IN, etc.) and
+          // set user/profile state. Just clear loading.
+          if (mounted) setLoading(false)
+        } catch (err) {
+          console.error('Error exchanging auth code:', err)
+          // Fall through to normal initAuth
+          await initAuth()
+        }
+      } else {
+        await initAuth()
+      }
+    }
+
+    init().finally(() => {
+      if (loadingTimeout) clearTimeout(loadingTimeout)
     })
 
     // Session recovery on tab switch is handled by the module-level
@@ -523,6 +583,20 @@ export default function Home() {
             }}>TEAM3D TRACKER</h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {/* Reset Countdown */}
+            <div style={{
+              padding: '6px 12px',
+              background: 'rgba(255, 255, 255, 0.05)',
+              borderRadius: '8px',
+              border: '1px solid #3a3a3a',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              lineHeight: 1.2
+            }} className="reset-countdown">
+              <span style={{ fontSize: '10px', color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reset in</span>
+              <span style={{ fontSize: 'clamp(13px, 2.5vw, 16px)', fontWeight: 700, color: '#ff6b35', fontVariantNumeric: 'tabular-nums' }}>{resetCountdown}</span>
+            </div>
             <div style={{
               padding: '6px 12px',
               background: 'rgba(255, 107, 53, 0.1)',
