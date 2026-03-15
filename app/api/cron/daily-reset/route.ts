@@ -32,13 +32,13 @@ export async function GET(request: NextRequest) {
 
     if (tasksError) throw tasksError
 
-    // Reset avatar_level and tasks_completed_today for all users
+    // Reset avatar_level, tasks_completed_today, and daily completion timestamp for all users
     const { error: profilesError } = await supabase
       .from('profiles')
       .update({
         avatar_level: 0,
         tasks_completed_today: 0,
-        first_completed_all_tasks_at: null,
+        completed_all_tasks_at: null,
       })
       .neq('id', '00000000-0000-0000-0000-000000000000') // Update all rows
 

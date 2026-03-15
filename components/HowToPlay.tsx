@@ -241,7 +241,7 @@ export default function HowToPlay() {
           </h3>
           <div style={{ color: '#ccc', fontSize: '15px', lineHeight: '1.8', fontWeight: 500 }}>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>1. Complete all 10 tasks</strong> - Be one of the first 3 to unlock elite status!
+              <strong style={{ color: '#fff', fontWeight: 700 }}>1. Complete all 10 tasks</strong> - Finish all your daily tasks to climb the leaderboard!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>2. Choose the best armour</strong> - Only the highest protection armour piece counts, so pick the strongest one! Remember armour expires after 2 weeks!

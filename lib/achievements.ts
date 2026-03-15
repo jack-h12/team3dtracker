@@ -267,15 +267,10 @@ export async function checkShopAchievements(
  */
 export async function checkSpecialAchievements(
   userId: string,
-  hasEliteStatus: boolean,
   dailyRank: number | null,
   lifetimeRank: number | null
 ): Promise<string[]> {
   const unlocked: string[] = []
-
-  if (hasEliteStatus) {
-    if (await unlockAchievement(userId, 'elite_status')) unlocked.push('elite_status')
-  }
 
   if (dailyRank === 1) {
     if (await unlockAchievement(userId, 'first_place_daily')) unlocked.push('first_place_daily')

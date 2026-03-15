@@ -223,7 +223,6 @@ export type Profile = {
   display_name: string | null
   name_changed_by: string | null
   is_admin: boolean
-  first_completed_all_tasks_at: string | null
   avatar_level: number
   lifetime_exp: number
   gold: number

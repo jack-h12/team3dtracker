@@ -244,16 +244,13 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
         .eq('id', userId))
     }
 
-    // Dynamically import to avoid circular dependency
-    const { checkAndAwardEliteStatus } = await import('./elite')
-    await checkAndAwardEliteStatus(userId)
-    // Re-fetch profile in case elite status or completed_all_tasks_at was updated
-    const { data: eliteProfile } = await supabase
+    // Re-fetch profile after updating completed_all_tasks_at
+    const { data: refreshedProfile } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single()
-    if (eliteProfile) updatedProfile = eliteProfile as Profile
+    if (refreshedProfile) updatedProfile = refreshedProfile as Profile
   }
 
   return updatedProfile
