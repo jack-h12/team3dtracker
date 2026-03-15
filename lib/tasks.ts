@@ -234,12 +234,20 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
     updatedProfile = updatedData as Profile
   }
 
-  // Check if user completed all tasks (10 tasks total, all done) and award elite status if eligible
+  // Check if user completed all tasks (10 tasks total, all done)
   if (tasks.length === 10 && completedCount === 10) {
+    // Record the timestamp when they completed all 10 tasks (for leaderboard ranking)
+    if (!updatedProfile.completed_all_tasks_at) {
+      await ((supabase
+        .from('profiles') as any)
+        .update({ completed_all_tasks_at: new Date().toISOString() })
+        .eq('id', userId))
+    }
+
     // Dynamically import to avoid circular dependency
     const { checkAndAwardEliteStatus } = await import('./elite')
     await checkAndAwardEliteStatus(userId)
-    // Re-fetch profile in case elite status was updated
+    // Re-fetch profile in case elite status or completed_all_tasks_at was updated
     const { data: eliteProfile } = await supabase
       .from('profiles')
       .select('*')
@@ -273,6 +281,14 @@ export async function uncompleteTask(taskId: string, userId: string, currentTask
   }
   const completedCount = tasks.filter(t => t.is_done).length
   const newDailyLevel = Math.min(completedCount, 10)
+
+  // Clear completion timestamp since they no longer have all 10 done
+  if (typedProfile.completed_all_tasks_at) {
+    await ((supabase
+      .from('profiles') as any)
+      .update({ completed_all_tasks_at: null })
+      .eq('id', userId))
+  }
 
   // Reverse rewards: subtract 10 gold and 5 EXP
   const newGold = Math.max(0, typedProfile.gold - 10)
@@ -388,12 +404,13 @@ export async function resetDailyTasks(userId: string): Promise<void> {
 
   if (error) throw error
 
-  // Reset avatar_level to 0 and tasks_completed_today to 0
+  // Reset avatar_level to 0, tasks_completed_today to 0, and clear completion timestamp
   const { error: profileError } = await ((supabase
     .from('profiles') as any)
-    .update({ 
+    .update({
       avatar_level: 0,
-      tasks_completed_today: 0
+      tasks_completed_today: 0,
+      completed_all_tasks_at: null
     })
     .eq('id', userId))
 

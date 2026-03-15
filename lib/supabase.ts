@@ -225,6 +225,7 @@ export type Profile = {
   lifetime_exp: number
   gold: number
   tasks_completed_today: number
+  completed_all_tasks_at: string | null
   potion_immunity_expires?: string | null
   created_at: string
 }
