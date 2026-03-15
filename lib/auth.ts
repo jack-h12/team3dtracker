@@ -138,15 +138,17 @@ export async function signIn(email: string, password: string) {
 export async function resetPassword(email: string) {
   // Prefer the configured app URL so reset emails always link to production,
   // even if the request originated from localhost during development.
-  let redirectUrl = '/'
+  // Redirect to the dedicated /reset-password page so the user lands on
+  // a proper password reset form after clicking the email link.
+  let baseUrl = ''
   if (process.env.NEXT_PUBLIC_APP_URL) {
-    redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL}/`
+    baseUrl = process.env.NEXT_PUBLIC_APP_URL.replace(/\/+$/, '')
   } else if (typeof window !== 'undefined') {
-    redirectUrl = `${window.location.origin}/`
+    baseUrl = window.location.origin
   }
 
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: redirectUrl
+    redirectTo: `${baseUrl}/reset-password`
   })
   if (error) throw error
 }
