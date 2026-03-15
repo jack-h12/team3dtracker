@@ -251,6 +251,74 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
   return updatedProfile
 }
 
+export async function uncompleteTask(taskId: string, userId: string, currentTasks?: Task[]): Promise<Profile> {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single()
+
+  if (profileError) throw profileError
+  const typedProfile = profile as Profile
+
+  // Mark task as not done
+  await updateTask(taskId, { is_done: false })
+
+  // Recalculate daily level
+  let tasks: Task[]
+  if (currentTasks) {
+    tasks = currentTasks.map(t => t.id === taskId ? { ...t, is_done: false } : t)
+  } else {
+    tasks = await getTodayTasks(userId)
+  }
+  const completedCount = tasks.filter(t => t.is_done).length
+  const newDailyLevel = Math.min(completedCount, 10)
+
+  // Reverse rewards: subtract 10 gold and 5 EXP
+  const newGold = Math.max(0, typedProfile.gold - 10)
+  const newExp = Math.max(0, typedProfile.lifetime_exp - 5)
+  const newTasksCompletedToday = Math.max(0, (typedProfile.tasks_completed_today || 0) - 1)
+
+  const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
+    user_id_param: userId,
+    gold_increase: -10,
+    exp_increase: -5,
+    new_level: newDailyLevel,
+    tasks_completed_today: newTasksCompletedToday
+  })
+
+  let updatedProfile: Profile
+
+  if (updateError) {
+    console.warn('Database function not available, using direct update:', updateError)
+    const { data: updatedData, error: directUpdateError } = await ((supabase
+      .from('profiles') as any)
+      .update({
+        avatar_level: newDailyLevel,
+        lifetime_exp: newExp,
+        gold: newGold,
+        tasks_completed_today: newTasksCompletedToday,
+      })
+      .eq('id', userId)
+      .select()
+      .single())
+
+    if (directUpdateError) throw directUpdateError
+    updatedProfile = updatedData as Profile
+  } else {
+    const { data: updatedData, error: fetchError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+
+    if (fetchError) throw fetchError
+    updatedProfile = updatedData as Profile
+  }
+
+  return updatedProfile
+}
+
 export async function deleteTask(taskId: string): Promise<void> {
   const { error } = await supabase
     .from('tasks')

@@ -17,7 +17,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getTodayTasks, addTask, completeTask, deleteTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
+import { getTodayTasks, addTask, completeTask, uncompleteTask, deleteTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
 import { getCurrentProfile } from '@/lib/auth'
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
@@ -300,20 +300,17 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     // Optimistically update the UI immediately
     const taskIndex = tasks.findIndex(t => t.id === taskId)
     if (taskIndex === -1) return
-    
+
     const originalTasks = [...tasks]
     const updatedTasks = [...tasks]
     updatedTasks[taskIndex] = { ...updatedTasks[taskIndex], is_done: true }
     setTasks(updatedTasks)
-    
+
     setLoading(true)
     try {
       // Pass current tasks to avoid re-fetching
       const updatedProfile = await completeTask(taskId, userId, tasks)
-      
-      // Tasks are already updated optimistically, no need to re-fetch
-      // The optimistic update is correct since we passed the current tasks array
-      
+
       // Pass updated profile to parent to avoid re-fetching
       if (onTaskComplete) {
         onTaskComplete(updatedProfile)
@@ -327,13 +324,44 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     }
   }
 
+  const handleUncompleteTask = async (taskId: string) => {
+    const taskIndex = tasks.findIndex(t => t.id === taskId)
+    if (taskIndex === -1) return
+
+    const originalTasks = [...tasks]
+    const updatedTasks = [...tasks]
+    updatedTasks[taskIndex] = { ...updatedTasks[taskIndex], is_done: false }
+    setTasks(updatedTasks)
+
+    setLoading(true)
+    try {
+      const updatedProfile = await uncompleteTask(taskId, userId, tasks)
+      if (onTaskComplete) {
+        onTaskComplete(updatedProfile)
+      }
+    } catch (err: any) {
+      setTasks(originalTasks)
+      await showModal('Error', err.message || 'Failed to uncomplete task', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleDeleteTask = async (taskId: string) => {
     setLoading(true)
     try {
+      const task = tasks.find(t => t.id === taskId)
+      // If the task was completed, reverse the rewards before deleting
+      if (task?.is_done) {
+        const updatedProfile = await uncompleteTask(taskId, userId, tasks)
+        if (onTaskComplete) {
+          onTaskComplete(updatedProfile)
+        }
+      }
       await deleteTask(taskId)
       setTasks(tasks.filter(t => t.id !== taskId))
-    } catch (err) {
-      console.error('Error deleting task:', err)
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to delete task', 'error')
     } finally {
       setLoading(false)
     }
@@ -659,13 +687,13 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                 <input
                   type="checkbox"
                   checked={task.is_done}
-                  onChange={() => !task.is_done && handleCompleteTask(task.id)}
-                  disabled={task.is_done || loading}
+                  onChange={() => task.is_done ? handleUncompleteTask(task.id) : handleCompleteTask(task.id)}
+                  disabled={loading}
                   style={{
                     marginRight: '16px',
                     width: '24px',
                     height: '24px',
-                    cursor: task.is_done || loading ? 'not-allowed' : 'pointer',
+                    cursor: loading ? 'not-allowed' : 'pointer',
                     accentColor: '#ff6b35',
                     flexShrink: 0
                   }}

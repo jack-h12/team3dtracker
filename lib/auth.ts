@@ -135,9 +135,28 @@ export async function signIn(email: string, password: string) {
   return data
 }
 
-export async function signOut() {
-  const { error } = await supabase.auth.signOut()
+export async function resetPassword(email: string) {
+  let redirectUrl = '/'
+  if (typeof window !== 'undefined') {
+    redirectUrl = `${window.location.origin}/`
+  } else if (process.env.NEXT_PUBLIC_APP_URL) {
+    redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL}/`
+  }
+
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: redirectUrl
+  })
   if (error) throw error
+}
+
+export async function updatePassword(newPassword: string) {
+  const { error } = await supabase.auth.updateUser({ password: newPassword })
+  if (error) throw error
+}
+
+export async function signOut() {
+  // Always attempt sign out; don't throw on error so local state is always cleared
+  await supabase.auth.signOut()
 }
 
 export async function getCurrentUser() {

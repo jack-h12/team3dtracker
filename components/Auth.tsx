@@ -12,20 +12,26 @@
 'use client'
 
 import { useState } from 'react'
-import { signUp, signIn } from '@/lib/auth'
+import { signUp, signIn, resetPassword } from '@/lib/auth'
+
+type AuthMode = 'login' | 'signup' | 'forgot'
 
 interface AuthProps {
   onAuthSuccess: () => void
 }
 
 export default function Auth({ onAuthSuccess }: AuthProps) {
-  const [isLogin, setIsLogin] = useState(true)
+  const [mode, setMode] = useState<AuthMode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [username, setUsername] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showEmailVerification, setShowEmailVerification] = useState(false)
+  const [showResetSent, setShowResetSent] = useState(false)
+
+  const isLogin = mode === 'login'
+  const isForgot = mode === 'forgot'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,6 +39,12 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
     setLoading(true)
 
     try {
+      if (isForgot) {
+        await resetPassword(email)
+        setShowResetSent(true)
+        return
+      }
+
       if (isLogin) {
         await signIn(email, password)
         onAuthSuccess()
@@ -43,7 +55,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
           return
         }
         const result = await signUp(email, password, username)
-        
+
         // Check if email confirmation is required
         if (result.user && !result.user.email_confirmed_at) {
           // Email confirmation required
@@ -51,7 +63,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
           setError('')
           return
         }
-        
+
         // Email already confirmed or confirmation not required
         onAuthSuccess()
       }
@@ -62,7 +74,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       console.error('Error code:', err.code)
       console.error('Error details:', err.details)
       console.error('Error hint:', err.hint)
-      
+
       // Try to extract the most helpful error message
       let errorMessage = 'Authentication failed'
       if (err.message) {
@@ -74,7 +86,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       } else if (typeof err === 'string') {
         errorMessage = err
       }
-      
+
       // Show full error in UI for debugging
       setError(`${errorMessage}${err.code ? ` (Code: ${err.code})` : ''}${err.details ? ` - ${err.details}` : ''}`)
     } finally {
@@ -121,15 +133,17 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             letterSpacing: '-1px'
-          }}>{isLogin ? 'WELCOME BACK' : 'GET STARTED'}</h2>
-          <p style={{ color: '#888', fontSize: '14px', fontWeight: 500 }}>Track your progress, dominate your goals</p>
+          }}>{isForgot ? 'RESET PASSWORD' : isLogin ? 'WELCOME BACK' : 'GET STARTED'}</h2>
+          <p style={{ color: '#888', fontSize: '14px', fontWeight: 500 }}>
+            {isForgot ? 'Enter your email to receive a reset link' : 'Track your progress, dominate your goals'}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit}>
-          {!isLogin && (
+          {mode === 'signup' && (
             <div style={{ marginBottom: '20px' }}>
-              <label style={{ 
-                display: 'block', 
+              <label style={{
+                display: 'block',
                 marginBottom: '8px',
                 color: '#ccc',
                 fontWeight: 600,
@@ -164,8 +178,8 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             </div>
           )}
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ 
-              display: 'block', 
+            <label style={{
+              display: 'block',
               marginBottom: '8px',
               color: '#ccc',
               fontWeight: 600,
@@ -198,9 +212,10 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               required
             />
           </div>
+          {!isForgot && (
           <div style={{ marginBottom: '25px' }}>
-            <label style={{ 
-              display: 'block', 
+            <label style={{
+              display: 'block',
               marginBottom: '8px',
               color: '#ccc',
               fontWeight: 600,
@@ -233,6 +248,28 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               required
             />
           </div>
+          )}
+          {showResetSent && (
+            <div style={{
+              color: '#4caf50',
+              marginBottom: '20px',
+              padding: '20px',
+              background: 'rgba(76, 175, 80, 0.1)',
+              border: '1px solid rgba(76, 175, 80, 0.3)',
+              borderRadius: '10px',
+              fontSize: '14px',
+              fontWeight: 500
+            }}>
+              <strong style={{ display: 'block', marginBottom: '8px', fontSize: '16px' }}>Check Your Email!</strong>
+              <p style={{ margin: '0 0 12px 0', lineHeight: '1.6' }}>
+                We've sent a password reset link to <strong>{email}</strong>.
+                Click the link in the email to set a new password.
+              </p>
+              <p style={{ margin: '0', fontSize: '12px', color: '#888' }}>
+                If you don't see the email, check your spam folder.
+              </p>
+            </div>
+          )}
           {showEmailVerification && (
             <div style={{
               color: '#4caf50',
@@ -301,11 +338,41 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               }
             }}
           >
-            {loading ? 'Loading...' : (isLogin ? 'LOGIN' : 'SIGN UP')}
+            {loading ? 'Loading...' : (isForgot ? 'SEND RESET LINK' : isLogin ? 'LOGIN' : 'SIGN UP')}
           </button>
         </form>
+        {isLogin && !isForgot && (
+          <button
+            onClick={() => { setMode('forgot'); setError(''); setShowResetSent(false) }}
+            style={{
+              width: '100%',
+              padding: '10px',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              color: '#888',
+              fontWeight: 500,
+              fontSize: '13px',
+              marginBottom: '12px',
+              transition: 'color 0.3s ease'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#ff6b35' }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = '#888' }}
+          >
+            Forgot your password?
+          </button>
+        )}
         <button
-          onClick={() => setIsLogin(!isLogin)}
+          onClick={() => {
+            if (isForgot) {
+              setMode('login')
+            } else {
+              setMode(isLogin ? 'signup' : 'login')
+            }
+            setError('')
+            setShowResetSent(false)
+            setShowEmailVerification(false)
+          }}
           style={{
             width: '100%',
             padding: '12px',
@@ -327,7 +394,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             e.currentTarget.style.color = '#ccc'
           }}
         >
-          {isLogin ? 'Need an account? Sign up' : 'Already have an account? Login'}
+          {isForgot ? 'Back to login' : isLogin ? 'Need an account? Sign up' : 'Already have an account? Login'}
         </button>
       </div>
     </div>

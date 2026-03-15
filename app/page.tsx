@@ -16,7 +16,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { supabase, resetSupabaseClient, forceResetSupabaseClient } from '@/lib/supabase'
-import { getCurrentUser, getCurrentProfile, signOut } from '@/lib/auth'
+import { getCurrentUser, getCurrentProfile, signOut, updatePassword } from '@/lib/auth'
 import { shouldResetTasks, resetDailyTasks } from '@/lib/tasks'
 import Auth from '@/components/Auth'
 import Tasks from '@/components/Tasks'
@@ -42,6 +42,11 @@ export default function Home() {
   const [userIsAdmin, setUserIsAdmin] = useState(false)
   const [modalState, setModalState] = useState(getModalState())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [showPasswordReset, setShowPasswordReset] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordResetError, setPasswordResetError] = useState('')
+  const [passwordResetLoading, setPasswordResetLoading] = useState(false)
 
   useEffect(() => {
     setModalStateSetter(setModalState)
@@ -145,7 +150,11 @@ export default function Home() {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return
-      
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setShowPasswordReset(true)
+      }
+
       try {
         if (session?.user) {
           setUser(session.user)
@@ -258,39 +267,198 @@ export default function Home() {
     }
   }, [user, loadProfile])
 
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setPasswordResetError('')
+
+    if (newPassword.length < 6) {
+      setPasswordResetError('Password must be at least 6 characters')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordResetError('Passwords do not match')
+      return
+    }
+
+    setPasswordResetLoading(true)
+    try {
+      await updatePassword(newPassword)
+      setShowPasswordReset(false)
+      setNewPassword('')
+      setConfirmPassword('')
+    } catch (err: any) {
+      setPasswordResetError(err.message || 'Failed to update password')
+    } finally {
+      setPasswordResetLoading(false)
+    }
+  }
+
+  // Password reset modal — rendered as a fixed overlay on any screen
+  const passwordResetModal = showPasswordReset ? (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(0, 0, 0, 0.8)',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 2000,
+      padding: '20px'
+    }}>
+      <div style={{
+        maxWidth: '420px',
+        width: '100%',
+        padding: '35px',
+        background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
+        border: '1px solid #3a3a3a',
+        borderRadius: '20px',
+        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)'
+      }}>
+        <h2 style={{
+          fontSize: '24px',
+          fontWeight: 800,
+          margin: '0 0 8px 0',
+          background: 'linear-gradient(135deg, #ffffff 0%, #ff6b35 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent'
+        }}>SET NEW PASSWORD</h2>
+        <p style={{ color: '#888', fontSize: '14px', marginBottom: '25px' }}>
+          Enter your new password below
+        </p>
+        <form onSubmit={handlePasswordReset}>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', color: '#ccc', fontWeight: 600, fontSize: '14px' }}>
+              New Password
+            </label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                boxSizing: 'border-box',
+                background: '#0a0a0a',
+                border: '1px solid #3a3a3a',
+                borderRadius: '10px',
+                color: '#fff',
+                fontSize: '15px',
+                fontWeight: 500
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = '#ff6b35' }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = '#3a3a3a' }}
+              required
+              minLength={6}
+            />
+          </div>
+          <div style={{ marginBottom: '25px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', color: '#ccc', fontWeight: 600, fontSize: '14px' }}>
+              Confirm Password
+            </label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                boxSizing: 'border-box',
+                background: '#0a0a0a',
+                border: '1px solid #3a3a3a',
+                borderRadius: '10px',
+                color: '#fff',
+                fontSize: '15px',
+                fontWeight: 500
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = '#ff6b35' }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = '#3a3a3a' }}
+              required
+              minLength={6}
+            />
+          </div>
+          {passwordResetError && (
+            <div style={{
+              color: '#ff4444',
+              marginBottom: '20px',
+              padding: '14px',
+              background: 'rgba(255, 68, 68, 0.1)',
+              border: '1px solid rgba(255, 68, 68, 0.3)',
+              borderRadius: '10px',
+              fontSize: '14px',
+              fontWeight: 500
+            }}>
+              {passwordResetError}
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={passwordResetLoading}
+            style={{
+              width: '100%',
+              padding: '16px',
+              background: passwordResetLoading
+                ? 'linear-gradient(135deg, #3a3a3a 0%, #2a2a2a 100%)'
+                : 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '10px',
+              cursor: passwordResetLoading ? 'not-allowed' : 'pointer',
+              fontWeight: 700,
+              fontSize: '16px',
+              boxShadow: passwordResetLoading ? 'none' : '0 8px 25px rgba(255, 107, 53, 0.4)'
+            }}
+          >
+            {passwordResetLoading ? 'Updating...' : 'UPDATE PASSWORD'}
+          </button>
+        </form>
+      </div>
+    </div>
+  ) : null
+
   if (loading) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh',
-        background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0f0f0f 100%)'
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{
-            width: '50px',
-            height: '50px',
-            border: '4px solid #2a2a2a',
-            borderTop: '4px solid #ff6b35',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 20px'
-          }}></div>
-          <p style={{ color: '#888', fontSize: '16px', fontWeight: 500 }}>Loading...</p>
+      <>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100vh',
+          background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0f0f0f 100%)'
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{
+              width: '50px',
+              height: '50px',
+              border: '4px solid #2a2a2a',
+              borderTop: '4px solid #ff6b35',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              margin: '0 auto 20px'
+            }}></div>
+            <p style={{ color: '#888', fontSize: '16px', fontWeight: 500 }}>Loading...</p>
+          </div>
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
         </div>
-        <style>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}</style>
-      </div>
+        {passwordResetModal}
+      </>
     )
   }
 
   if (!user || !profile) {
-    return <Auth onAuthSuccess={handleAuthSuccess} />
+    return (
+      <>
+        <Auth onAuthSuccess={handleAuthSuccess} />
+        {passwordResetModal}
+      </>
+    )
   }
 
   return (
@@ -543,6 +711,8 @@ export default function Home() {
         </div>
       </div>
       
+      {passwordResetModal}
+
       {/* Global Modal */}
       <Modal
         isOpen={modalState.isOpen}
