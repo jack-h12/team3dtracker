@@ -264,14 +264,40 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
       console.error('Error updating display name:', nameError)
       throw new Error(`Failed to change name: ${nameError.message}`)
     }
-  } else if (typedItem.type === 'name_restore') {
-    // Restore user's own name using database function (bypasses RLS)
-    const { error: restoreError } = await (supabase.rpc as any)('restore_display_name', {
-      user_id_to_restore: userId
-    })
+  } else if (typedItem.type === 'name_restore' && customName) {
+    const newUsername = customName.trim()
+
+    // Check if username is already taken
+    const { data: existingUser } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('username', newUsername)
+      .neq('id', userId)
+      .single()
+
+    if (existingUser) {
+      throw new Error('Username is already taken')
+    }
+
+    // Update actual username and clear display_name so no "(old_name)" shows
+    const { error: usernameError } = await ((supabase
+      .from('profiles') as any)
+      .update({ username: newUsername, display_name: null, name_changed_by: null })
+      .eq('id', userId))
+
+    if (usernameError) {
+      console.error('Error changing username:', usernameError)
+      throw new Error(`Failed to change username: ${usernameError.message}`)
+    }
+  } else if (typedItem.type === 'display_name_restore') {
+    // Clear display_name and name_changed_by to restore original username
+    const { error: restoreError } = await ((supabase
+      .from('profiles') as any)
+      .update({ display_name: null, name_changed_by: null })
+      .eq('id', userId))
 
     if (restoreError) {
-      console.error('Error restoring display name:', restoreError)
+      console.error('Error restoring name:', restoreError)
       throw new Error(`Failed to restore name: ${restoreError.message}`)
     }
   }

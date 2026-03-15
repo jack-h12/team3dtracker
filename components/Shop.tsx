@@ -195,7 +195,14 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       const confirmed = await showConfirm('Change Name', `Change ${targetUser ? getDisplayName(targetUser) : 'this user'}'s name to "${customName.trim()}"?`)
       if (!confirmed) return
     } else if (itemType === 'name_restore') {
-      const confirmed = await showConfirm('Restore Name', 'Restore your name back to original? This will remove any custom name set by others.')
+      if (!customName || customName.trim().length === 0) {
+        await showModal('Warning', 'Please enter a new username', 'warning')
+        return
+      }
+      const confirmed = await showConfirm('Change Username', `Change your username to "${customName.trim()}"?`)
+      if (!confirmed) return
+    } else if (itemType === 'display_name_restore') {
+      const confirmed = await showConfirm('Restore Name', 'Remove your nickname and restore your original username?')
       if (!confirmed) return
     } else {
       await showModal('Error', 'This item type cannot be used', 'error')
@@ -208,7 +215,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
         userId,
         inventoryId,
         (itemType === 'weapon' || itemType === 'name_change') ? selectedTarget : undefined,
-        itemType === 'name_change' ? customName : undefined
+        (itemType === 'name_change' || itemType === 'name_restore') ? customName : undefined
       )
       await loadData()
       const nameToShow = customName.trim()
@@ -216,6 +223,14 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       setSelectedTarget('')
       if (itemType === 'name_change') {
         await showModal('Success', `Name changed successfully! The target's name is now "${nameToShow}"`, 'success')
+      } else if (itemType === 'name_restore') {
+        await showModal('Success', `Username changed to "${nameToShow}"!`, 'success')
+        window.location.reload()
+        return
+      } else if (itemType === 'display_name_restore') {
+        await showModal('Success', 'Your nickname has been removed! Your original username is restored.', 'success')
+        window.location.reload()
+        return
       } else {
         await showModal('Success', 'Item used!', 'success')
       }
@@ -234,7 +249,8 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       case 'potion': return '🧪'
       case 'pet': return '🐾'
       case 'name_change': return '📜'
-      case 'name_restore': return '✨'
+      case 'name_restore': return '📜'
+      case 'display_name_restore': return '✨'
       default: return '📦'
     }
   }, [])
@@ -659,12 +675,12 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         ))}
                       </select>
                     )}
-                    {inv.item.type === 'name_change' && (
+                    {(inv.item.type === 'name_change' || inv.item.type === 'name_restore') && (
                       <input
                         type="text"
                         value={customName}
                         onChange={(e) => setCustomName(e.target.value)}
-                        placeholder="Enter new name..."
+                        placeholder={inv.item.type === 'name_restore' ? "Enter your new username..." : "Enter new name..."}
                         maxLength={30}
                         style={{
                           padding: '10px 14px',
@@ -681,13 +697,14 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         }}
                       />
                     )}
-                    {(inv.item.type === 'weapon' || inv.item.type === 'potion' || inv.item.type === 'name_change' || inv.item.type === 'name_restore') && (
+                    {(inv.item.type === 'weapon' || inv.item.type === 'potion' || inv.item.type === 'name_change' || inv.item.type === 'name_restore' || inv.item.type === 'display_name_restore') && (
                       <button
                         onClick={() => handleUseItem(inv.id, inv.item.type)}
                         disabled={
                           loading ||
                           (inv.item.type === 'weapon' && !selectedTarget) ||
-                          (inv.item.type === 'name_change' && (!selectedTarget || !customName.trim()))
+                          (inv.item.type === 'name_change' && (!selectedTarget || !customName.trim())) ||
+                          (inv.item.type === 'name_restore' && !customName.trim())
                         }
                         style={{
                           padding: '12px 24px',
@@ -703,13 +720,15 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                           borderRadius: '10px',
                           cursor: (loading ||
                             (inv.item.type === 'weapon' && !selectedTarget) ||
-                            (inv.item.type === 'name_change' && (!selectedTarget || !customName.trim()))) ? 'not-allowed' : 'pointer',
+                            (inv.item.type === 'name_change' && (!selectedTarget || !customName.trim())) ||
+                            (inv.item.type === 'name_restore' && !customName.trim())) ? 'not-allowed' : 'pointer',
                           fontWeight: 700,
                           fontSize: '14px',
                           transition: 'all 0.3s ease',
                           boxShadow: (loading ||
                             (inv.item.type === 'weapon' && !selectedTarget) ||
-                            (inv.item.type === 'name_change' && (!selectedTarget || !customName.trim())))
+                            (inv.item.type === 'name_change' && (!selectedTarget || !customName.trim())) ||
+                            (inv.item.type === 'name_restore' && !customName.trim()))
                             ? 'none'
                             : `0 4px 15px ${inv.item.type === 'weapon' ? 'rgba(255, 68, 68, 0.4)' : inv.item.type === 'potion' ? 'rgba(76, 175, 80, 0.4)' : inv.item.type === 'name_change' ? 'rgba(255, 107, 157, 0.4)' : 'rgba(255, 215, 0, 0.4)'}`,
                           flex: '0 1 auto',
@@ -718,7 +737,8 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         onMouseEnter={(e) => {
                           if (!loading &&
                             !(inv.item.type === 'weapon' && !selectedTarget) &&
-                            !(inv.item.type === 'name_change' && (!selectedTarget || !customName.trim()))) {
+                            !(inv.item.type === 'name_change' && (!selectedTarget || !customName.trim())) &&
+                            !(inv.item.type === 'name_restore' && !customName.trim())) {
                             e.currentTarget.style.transform = 'translateY(-2px)'
                             e.currentTarget.style.boxShadow = `0 6px 20px ${inv.item.type === 'weapon' ? 'rgba(255, 68, 68, 0.5)' : inv.item.type === 'potion' ? 'rgba(76, 175, 80, 0.5)' : inv.item.type === 'name_change' ? 'rgba(255, 107, 157, 0.5)' : 'rgba(255, 215, 0, 0.5)'}`
                           }
@@ -726,7 +746,8 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         onMouseLeave={(e) => {
                           if (!loading &&
                             !(inv.item.type === 'weapon' && !selectedTarget) &&
-                            !(inv.item.type === 'name_change' && (!selectedTarget || !customName.trim()))) {
+                            !(inv.item.type === 'name_change' && (!selectedTarget || !customName.trim())) &&
+                            !(inv.item.type === 'name_restore' && !customName.trim())) {
                             e.currentTarget.style.transform = 'translateY(0)'
                             e.currentTarget.style.boxShadow = `0 4px 15px ${inv.item.type === 'weapon' ? 'rgba(255, 68, 68, 0.4)' : inv.item.type === 'potion' ? 'rgba(76, 175, 80, 0.4)' : inv.item.type === 'name_change' ? 'rgba(255, 107, 157, 0.4)' : 'rgba(255, 215, 0, 0.4)'}`
                           }
@@ -735,7 +756,9 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                         {inv.item.type === 'weapon' ? '⚔️ ATTACK' :
                          inv.item.type === 'potion' ? '🧪 USE' :
                          inv.item.type === 'name_change' ? '✏️ CHANGE NAME' :
-                         '✨ RESTORE NAME'}
+                         inv.item.type === 'name_restore' ? '📜 CHANGE USERNAME' :
+                         inv.item.type === 'display_name_restore' ? '✨ RESTORE NAME' :
+                         '🔮 USE'}
                       </button>
                     )}
                   </div>

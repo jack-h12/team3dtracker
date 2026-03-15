@@ -12,7 +12,7 @@ ALTER TABLE profiles
 -- 2. Add new shop items
 INSERT INTO shop_items (name, type, cost, effect) VALUES
   ('Name Change Scroll', 'name_change', 500, '{"description": "Change someone else''s displayed name"}'),
-  ('Name Restore Scroll', 'name_restore', 200, '{"description": "Restore your own name back to original"}')
+  ('Username Change Scroll', 'name_restore', 200, '{"description": "Change your own username to anything you want"}')
 ON CONFLICT DO NOTHING;
 
 -- 3. Update RLS policies to allow updating display_name

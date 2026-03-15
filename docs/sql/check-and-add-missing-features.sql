@@ -29,9 +29,9 @@ WHERE NOT EXISTS (
 );
 
 INSERT INTO shop_items (name, type, cost, effect) 
-SELECT 'Name Restore Scroll', 'name_restore', 200, '{"description": "Restore your own name back to original"}'
+SELECT 'Username Change Scroll', 'name_restore', 200, '{"description": "Change your own username to anything you want"}'
 WHERE NOT EXISTS (
-  SELECT 1 FROM shop_items WHERE name = 'Name Restore Scroll' AND type = 'name_restore'
+  SELECT 1 FROM shop_items WHERE name = 'Username Change Scroll' AND type = 'name_restore'
 );
 
 -- Step 5: Verify everything is set up
@@ -49,7 +49,7 @@ SELECT
   'Shop items' as check_type,
   CASE 
     WHEN EXISTS (SELECT 1 FROM shop_items WHERE name = 'Name Change Scroll')
-      AND EXISTS (SELECT 1 FROM shop_items WHERE name = 'Name Restore Scroll')
+      AND EXISTS (SELECT 1 FROM shop_items WHERE name = 'Username Change Scroll')
     THEN '✓ All items exist'
     ELSE '✗ Missing items'
   END as status;

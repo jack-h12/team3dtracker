@@ -132,6 +132,7 @@ INSERT INTO shop_items (name, type, cost, effect) VALUES
   ('Cool Hat', 'clothes', 25, '{"description": "Cosmetic item"}'),
   ('Epic Cape', 'clothes', 100, '{"description": "Fancy cosmetic item"}'),
   ('Name Change Scroll', 'name_change', 500, '{"description": "Change someone else''s displayed name"}'),
-  ('Name Restore Scroll', 'name_restore', 200, '{"description": "Restore your own name back to original"}')
+  ('Username Change Scroll', 'name_restore', 200, '{"description": "Change your own username to anything you want"}'),
+  ('Name Restore Scroll', 'display_name_restore', 150, '{"description": "Remove your nickname and restore your original username"}')
 ON CONFLICT DO NOTHING;
 

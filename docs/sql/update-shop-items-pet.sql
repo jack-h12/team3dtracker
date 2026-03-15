@@ -24,7 +24,7 @@ ALTER TABLE shop_items
 
 ALTER TABLE shop_items 
   ADD CONSTRAINT shop_items_type_check 
-  CHECK (type IN ('armour', 'weapon', 'potion', 'pet', 'name_change', 'name_restore'));
+  CHECK (type IN ('armour', 'weapon', 'potion', 'pet', 'name_change', 'name_restore', 'display_name_restore'));
 
 -- Step 4: Add Pet Gorilla (or update if it already exists)
 INSERT INTO shop_items (name, type, cost, effect) 

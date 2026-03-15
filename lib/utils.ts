@@ -64,6 +64,8 @@ export function getItemImage(item: { type: string; name: string; cost?: number }
   } else if (item.type === 'name_change') {
     return '📜'
   } else if (item.type === 'name_restore') {
+    return '📜'
+  } else if (item.type === 'display_name_restore') {
     return '✨'
   }
   return '📦'
