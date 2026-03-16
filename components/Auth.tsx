@@ -47,7 +47,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
 
       if (isLogin) {
         await signIn(email, password)
-        onAuthSuccess()
+        await onAuthSuccess()
       } else {
         if (!username.trim()) {
           setError('Username is required')
@@ -65,7 +65,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         }
 
         // Email already confirmed or confirmation not required
-        onAuthSuccess()
+        await onAuthSuccess()
       }
     } catch (err: any) {
       // Show more detailed error message
