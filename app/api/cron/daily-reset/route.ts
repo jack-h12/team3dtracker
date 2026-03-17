@@ -52,6 +52,17 @@ export async function GET(request: NextRequest) {
       if (profilesError) throw profilesError
     }
 
+    // Clean up expired armour from all users' inventories
+    const { error: armourCleanupError } = await supabase
+      .from('user_inventory')
+      .delete()
+      .not('expires_at', 'is', null)
+      .lte('expires_at', new Date().toISOString())
+
+    if (armourCleanupError) {
+      console.warn('Expired armour cleanup failed:', armourCleanupError.message)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Daily reset completed for all users',

@@ -22,6 +22,10 @@ AS $$
 BEGIN
   -- Delete all tasks for all users
   DELETE FROM tasks;
+
+  -- Clean up expired armour from all users' inventories
+  DELETE FROM user_inventory
+  WHERE expires_at IS NOT NULL AND expires_at <= NOW();
   
   -- Reset avatar_level, tasks_completed_today, and completed_all_tasks_at for all users
   UPDATE profiles

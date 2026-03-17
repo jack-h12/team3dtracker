@@ -131,10 +131,33 @@ export async function getUserInventory(userId: string, signal?: AbortSignal): Pr
   const { data, error } = await query
 
   if (error) throw error
-  return data?.map((inv: any) => ({
+
+  const items = data?.map((inv: any) => ({
     ...inv,
     item: inv.item[0] || inv.item,
   })) || []
+
+  // Clean up expired armour from the database
+  const now = new Date()
+  const expiredIds = items
+    .filter(inv => inv.item.type === 'armour' && inv.expires_at && new Date(inv.expires_at) <= now)
+    .map(inv => inv.id)
+
+  if (expiredIds.length > 0) {
+    // Delete expired armour in the background (don't block the response)
+    supabase
+      .from('user_inventory')
+      .delete()
+      .in('id', expiredIds)
+      .then(({ error: deleteError }) => {
+        if (deleteError) console.error('Failed to clean up expired armour:', deleteError)
+      })
+  }
+
+  // Return only non-expired items
+  return items.filter(inv =>
+    inv.item.type !== 'armour' || !inv.expires_at || new Date(inv.expires_at) > now
+  )
 }
 
 export async function useItem(userId: string, inventoryId: string, targetUserId?: string, customName?: string): Promise<void> {

@@ -77,6 +77,10 @@ BEGIN
       tasks_completed_today = 0,
       completed_all_tasks_at = NULL;
     
+    -- Clean up expired armour from all users' inventories
+    DELETE FROM user_inventory
+    WHERE expires_at IS NOT NULL AND expires_at <= NOW();
+
     -- Update the reset log
     UPDATE daily_reset_log
     SET 
