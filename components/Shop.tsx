@@ -36,6 +36,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
   const [items, setItems] = useState<ShopItem[]>([])
   const [inventory, setInventory] = useState<(UserInventory & { item: ShopItem })[]>([])
   const [allUsers, setAllUsers] = useState<Profile[]>([])
+  const [userGold, setUserGold] = useState<number>(0)
   const [selectedTarget, setSelectedTarget] = useState('')
   const [customName, setCustomName] = useState('')
   const [loading, setLoading] = useState(false)
@@ -60,16 +61,20 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       setLoading(true)
     }
     try {
-      const [shopItems, userInv, users] = await Promise.all([
+      const [shopItems, userInv, users, profileResult] = await Promise.all([
         withRetry(({ signal }) => getShopItems(signal), { maxRetries: 3, timeout: 15000 }),
         withRetry(({ signal }) => getUserInventory(userId, signal), { maxRetries: 3, timeout: 15000 }),
         withRetry(({ signal }) => getDailyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
+        supabase.from('profiles').select('gold').eq('id', userId).single(),
       ])
-      
+
       if (mountedRef.current) {
         setItems(shopItems)
         setInventory(userInv)
         setAllUsers(users.filter((u) => u.id !== userId))
+        if (profileResult.data) {
+          setUserGold((profileResult.data as any).gold ?? 0)
+        }
         // Mark that we've loaded initial data
         hasInitialDataRef.current = true
       }
@@ -319,25 +324,33 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }} className="responsive-grid">
             {items.map((item) => {
               const typeColors = getItemTypeColor(item.type)
+              const canAfford = userGold >= item.cost
               return (
                 <div
                   key={item.id}
                   style={{
                     background: typeColors.bg,
-                    border: `2px solid ${typeColors.border}`,
+                    border: `2px solid ${canAfford ? typeColors.border : '#555'}`,
                     borderRadius: '16px',
                     padding: '25px',
                     transition: 'all 0.3s ease',
-                    boxShadow: `0 8px 30px ${typeColors.glow}`,
-                    cursor: 'pointer'
+                    boxShadow: canAfford ? `0 8px 30px ${typeColors.glow}` : '0 4px 15px rgba(0, 0, 0, 0.3)',
+                    cursor: canAfford ? 'pointer' : 'not-allowed',
+                    opacity: canAfford ? 1 : 0.5,
+                    filter: canAfford ? 'none' : 'grayscale(60%)',
+                    position: 'relative' as const
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-6px)'
-                    e.currentTarget.style.boxShadow = `0 12px 40px ${typeColors.glow}`
+                    if (canAfford) {
+                      e.currentTarget.style.transform = 'translateY(-6px)'
+                      e.currentTarget.style.boxShadow = `0 12px 40px ${typeColors.glow}`
+                    }
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)'
-                    e.currentTarget.style.boxShadow = `0 8px 30px ${typeColors.glow}`
+                    if (canAfford) {
+                      e.currentTarget.style.transform = 'translateY(0)'
+                      e.currentTarget.style.boxShadow = `0 8px 30px ${typeColors.glow}`
+                    }
                   }}
                 >
                   <div style={{
@@ -460,42 +473,47 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                     )}
                   </div>
                   <button
-                    onClick={() => handlePurchase(item.id)}
-                    disabled={loading}
+                    onClick={() => canAfford && handlePurchase(item.id)}
+                    disabled={loading || !canAfford}
                     style={{
                       width: '100%',
                       padding: '14px',
-                      background: loading
+                      background: !canAfford
+                        ? 'linear-gradient(135deg, #3a3a3a 0%, #2a2a2a 100%)'
+                        : loading
                         ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
                         : 'linear-gradient(135deg, #ffd700 0%, #ffb300 100%)',
-                      color: loading ? '#888' : '#000',
-                      border: 'none',
+                      color: !canAfford ? '#888' : loading ? '#888' : '#000',
+                      border: !canAfford ? '1px solid #555' : 'none',
                       borderRadius: '10px',
-                      cursor: loading ? 'not-allowed' : 'pointer',
+                      cursor: (!canAfford || loading) ? 'not-allowed' : 'pointer',
                       fontWeight: 800,
                       fontSize: '16px',
                       transition: 'all 0.3s ease',
-                      boxShadow: loading ? 'none' : '0 4px 15px rgba(255, 215, 0, 0.4)',
+                      boxShadow: (!canAfford || loading) ? 'none' : '0 4px 15px rgba(255, 215, 0, 0.4)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       gap: '8px'
                     }}
                     onMouseEnter={(e) => {
-                      if (!loading) {
+                      if (!loading && canAfford) {
                         e.currentTarget.style.transform = 'translateY(-2px)'
                         e.currentTarget.style.boxShadow = '0 6px 20px rgba(255, 215, 0, 0.5)'
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (!loading) {
+                      if (!loading && canAfford) {
                         e.currentTarget.style.transform = 'translateY(0)'
                         e.currentTarget.style.boxShadow = '0 4px 15px rgba(255, 215, 0, 0.4)'
                       }
                     }}
                   >
-                    <span>💰</span> 
-                    {`${item.cost} GOLD`}
+                    {canAfford ? (
+                      <><span>💰</span> {`${item.cost} GOLD`}</>
+                    ) : (
+                      <><span>🔒</span> {`${item.cost} GOLD`}</>
+                    )}
                   </button>
                 </div>
               )
