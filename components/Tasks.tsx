@@ -21,6 +21,7 @@ import { getTodayTasks, addTask, completeTask, uncompleteTask, deleteTask, shoul
 import { getCurrentProfile } from '@/lib/auth'
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
+import { supabase } from '@/lib/supabase'
 import type { Task, Profile } from '@/lib/supabase'
 
 interface TasksProps {
@@ -119,7 +120,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
    */
   const loadTasks = useCallback(async (checkReset: boolean = false, silent: boolean = false) => {
     console.log("Tasks: loadTasks called, checkReset:", checkReset, "isLoading:", isLoadingRef.current, "silent:", silent);
-    
+
     // Prevent multiple simultaneous calls - skip if already loading
     if (isLoadingRef.current) {
       console.log("Tasks: Already loading, skipping");
@@ -133,7 +134,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     }
 
     console.log("Tasks: Starting load...");
-    
+
     // Set loading flag to true BEFORE starting fetch - prevents duplicate calls
     isLoadingRef.current = true;
     // Only show loading UI if we haven't loaded initial data yet and not silent
@@ -142,9 +143,28 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     }
 
     try {
+      // Ensure the Supabase session is valid before making data queries.
+      // When the browser is reopened after being closed, the JWT may be expired
+      // and the auto-refresh may not have completed yet. This explicit check
+      // forces a refresh if needed, preventing empty results from RLS filtering.
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.expires_at && session.expires_at * 1000 < Date.now()) {
+          console.log("Tasks: Session expired, refreshing...");
+          await supabase.auth.refreshSession();
+        }
+      } catch (sessionErr) {
+        console.warn("Tasks: Session check/refresh failed, continuing:", sessionErr);
+      }
+
       // Only check for daily reset on initial mount (checkReset=true)
+      // Wrapped in its own try-catch so a failure here doesn't prevent task loading
       if (checkReset) {
-        await handleDailyReset();
+        try {
+          await handleDailyReset();
+        } catch (resetErr) {
+          console.warn("Tasks: Daily reset check failed, continuing to load tasks:", resetErr);
+        }
       }
 
       // Fetch tasks with retry and timeout handling
@@ -165,6 +185,24 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       }
     } catch (err: any) {
       console.error("Tasks: Failed to load tasks:", err?.message || err);
+      // If the fetch failed (possibly due to auth issues), try once more after
+      // a brief delay to allow the Supabase auto-refresh to complete.
+      if (mountedRef.current) {
+        try {
+          await supabase.auth.refreshSession();
+          const taskList = await withRetry(
+            ({ signal }) => getTodayTasks(userId, signal),
+            { maxRetries: 1, timeout: 10000 }
+          );
+          if (mountedRef.current) {
+            setTasks(taskList);
+            hasInitialDataRef.current = true;
+            console.log("Tasks: Retry succeeded with", taskList.length, "tasks");
+          }
+        } catch (retryErr) {
+          console.error("Tasks: Retry also failed:", retryErr);
+        }
+      }
     } finally {
       // Always reset loading flag
       isLoadingRef.current = false;
