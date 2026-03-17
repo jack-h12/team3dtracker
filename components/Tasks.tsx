@@ -17,7 +17,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getTodayTasks, addTask, completeTask, uncompleteTask, deleteTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
+import { getTodayTasks, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
 import { getCurrentProfile } from '@/lib/auth'
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
@@ -46,6 +46,11 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   // Reset tracking
   const [lastReset, setLastReset] = useState<string | null>(null)
   
+  // Editing state
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const [editDescription, setEditDescription] = useState('')
+  const [editReward, setEditReward] = useState('')
+
   // Drag and drop state
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null)
@@ -406,6 +411,41 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   }
 
   // ============================================================================
+  // EDIT HANDLERS
+  // ============================================================================
+
+  const startEditing = (task: Task) => {
+    setEditingTaskId(task.id)
+    setEditDescription(task.description)
+    setEditReward(task.reward || '')
+  }
+
+  const cancelEditing = () => {
+    setEditingTaskId(null)
+    setEditDescription('')
+    setEditReward('')
+  }
+
+  const handleSaveEdit = async (taskId: string) => {
+    if (!editDescription.trim()) return
+
+    const originalTasks = [...tasks]
+    // Optimistic update
+    setTasks(tasks.map(t => t.id === taskId ? { ...t, description: editDescription.trim(), reward: editReward.trim() || null } : t))
+    setEditingTaskId(null)
+
+    try {
+      await updateTask(taskId, {
+        description: editDescription.trim(),
+        reward: editReward.trim() || null,
+      })
+    } catch (err: any) {
+      setTasks(originalTasks)
+      await showModal('Error', err.message || 'Failed to update task', 'error')
+    }
+  }
+
+  // ============================================================================
   // DRAG & DROP HANDLERS
   // ============================================================================
 
@@ -736,61 +776,187 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                     flexShrink: 0
                   }}
                 />
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <span
-                    style={{
-                      textDecoration: task.is_done ? 'line-through' : 'none',
-                      opacity: task.is_done ? 0.5 : 1,
-                      color: task.is_done ? '#888' : '#fff',
-                      fontSize: '15px',
-                      fontWeight: task.is_done ? 500 : 600
-                    }}
-                  >
-                    {task.description}
-                  </span>
-                  {task.reward && (
-                    <span
+                {editingTaskId === task.id ? (
+                  /* Editing mode */
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input
+                      type="text"
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveEdit(task.id)
+                        if (e.key === 'Escape') cancelEditing()
+                      }}
+                      autoFocus
                       style={{
+                        padding: '8px 12px',
+                        background: '#0a0a0a',
+                        border: '1px solid #ff6b35',
+                        borderRadius: '8px',
+                        color: '#fff',
+                        fontSize: '15px',
+                        fontWeight: 500,
+                        outline: 'none',
+                        boxShadow: '0 0 0 3px rgba(255, 107, 53, 0.1)'
+                      }}
+                    />
+                    <input
+                      type="text"
+                      value={editReward}
+                      onChange={(e) => setEditReward(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveEdit(task.id)
+                        if (e.key === 'Escape') cancelEditing()
+                      }}
+                      placeholder="Reward (optional)"
+                      style={{
+                        padding: '6px 12px',
+                        background: '#0a0a0a',
+                        border: '1px solid #3a3a3a',
+                        borderRadius: '8px',
+                        color: '#ffd700',
                         fontSize: '13px',
-                        color: task.is_done ? '#888' : '#ffd700',
+                        fontWeight: 500,
+                        outline: 'none'
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#ffd700'
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(255, 215, 0, 0.1)'
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = '#3a3a3a'
+                        e.currentTarget.style.boxShadow = 'none'
+                      }}
+                    />
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => handleSaveEdit(task.id)}
+                        disabled={!editDescription.trim()}
+                        style={{
+                          padding: '6px 14px',
+                          background: editDescription.trim()
+                            ? 'linear-gradient(135deg, #4caf50 0%, #388e3c 100%)'
+                            : '#2a2a2a',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: editDescription.trim() ? 'pointer' : 'not-allowed',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          transition: 'all 0.3s ease'
+                        }}
+                      >
+                        SAVE
+                      </button>
+                      <button
+                        onClick={cancelEditing}
+                        style={{
+                          padding: '6px 14px',
+                          background: 'rgba(255, 255, 255, 0.1)',
+                          color: '#888',
+                          border: '1px solid #3a3a3a',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          transition: 'all 0.3s ease'
+                        }}
+                      >
+                        CANCEL
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Display mode */
+                  <>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <span
+                        style={{
+                          textDecoration: task.is_done ? 'line-through' : 'none',
+                          opacity: task.is_done ? 0.5 : 1,
+                          color: task.is_done ? '#888' : '#fff',
+                          fontSize: '15px',
+                          fontWeight: task.is_done ? 500 : 600
+                        }}
+                      >
+                        {task.description}
+                      </span>
+                      {task.reward && (
+                        <span
+                          style={{
+                            fontSize: '13px',
+                            color: task.is_done ? '#888' : '#ffd700',
+                            fontWeight: 600,
+                            fontStyle: 'italic',
+                            opacity: task.is_done ? 0.5 : 1
+                          }}
+                        >
+                          🎁 Reward: {task.reward}
+                        </span>
+                      )}
+                    </div>
+                    {!task.is_done && (
+                      <button
+                        onClick={() => startEditing(task)}
+                        disabled={loading}
+                        style={{
+                          padding: '8px 16px',
+                          background: 'rgba(255, 107, 53, 0.1)',
+                          color: '#ff6b35',
+                          border: '1px solid rgba(255, 107, 53, 0.3)',
+                          borderRadius: '8px',
+                          cursor: loading ? 'not-allowed' : 'pointer',
+                          fontWeight: 600,
+                          fontSize: '13px',
+                          transition: 'all 0.3s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!loading) {
+                            e.currentTarget.style.background = 'rgba(255, 107, 53, 0.2)'
+                            e.currentTarget.style.borderColor = '#ff6b35'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!loading) {
+                            e.currentTarget.style.background = 'rgba(255, 107, 53, 0.1)'
+                            e.currentTarget.style.borderColor = 'rgba(255, 107, 53, 0.3)'
+                          }
+                        }}
+                      >
+                        EDIT
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteTask(task.id)}
+                      disabled={loading}
+                      style={{
+                        padding: '8px 16px',
+                        background: 'rgba(255, 68, 68, 0.1)',
+                        color: '#ff4444',
+                        border: '1px solid rgba(255, 68, 68, 0.3)',
+                        borderRadius: '8px',
+                        cursor: loading ? 'not-allowed' : 'pointer',
                         fontWeight: 600,
-                        fontStyle: 'italic',
-                        opacity: task.is_done ? 0.5 : 1
+                        fontSize: '13px',
+                        transition: 'all 0.3s ease'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!loading) {
+                          e.currentTarget.style.background = 'rgba(255, 68, 68, 0.2)'
+                          e.currentTarget.style.borderColor = '#ff4444'
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!loading) {
+                          e.currentTarget.style.background = 'rgba(255, 68, 68, 0.1)'
+                          e.currentTarget.style.borderColor = 'rgba(255, 68, 68, 0.3)'
+                        }
                       }}
                     >
-                      🎁 Reward: {task.reward}
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleDeleteTask(task.id)}
-                  disabled={loading}
-                  style={{
-                    padding: '8px 16px',
-                    background: 'rgba(255, 68, 68, 0.1)',
-                    color: '#ff4444',
-                    border: '1px solid rgba(255, 68, 68, 0.3)',
-                    borderRadius: '8px',
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    transition: 'all 0.3s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!loading) {
-                      e.currentTarget.style.background = 'rgba(255, 68, 68, 0.2)'
-                      e.currentTarget.style.borderColor = '#ff4444'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!loading) {
-                      e.currentTarget.style.background = 'rgba(255, 68, 68, 0.1)'
-                      e.currentTarget.style.borderColor = 'rgba(255, 68, 68, 0.3)'
-                    }
-                  }}
-                >
-                  DELETE
-                </button>
+                      DELETE
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>
