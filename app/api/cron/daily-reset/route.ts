@@ -24,25 +24,33 @@ export async function GET(request: NextRequest) {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
-    // Delete all tasks for all users
-    const { error: tasksError } = await supabase
-      .from('tasks')
-      .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000') // Delete all rows (neq a non-existent id)
+    // Call the same database function the admin reset uses.
+    // This is a SECURITY DEFINER function that bypasses RLS and
+    // resets all users regardless of whether they are logged in.
+    const { error: rpcError } = await supabase.rpc('admin_reset_all_daily_progress')
 
-    if (tasksError) throw tasksError
+    if (rpcError) {
+      // Fallback: if the RPC function doesn't exist, do it manually
+      console.warn('RPC function failed, falling back to manual reset:', rpcError.message)
 
-    // Reset avatar_level, tasks_completed_today, and daily completion timestamp for all users
-    const { error: profilesError } = await supabase
-      .from('profiles')
-      .update({
-        avatar_level: 0,
-        tasks_completed_today: 0,
-        completed_all_tasks_at: null,
-      })
-      .neq('id', '00000000-0000-0000-0000-000000000000') // Update all rows
+      const { error: tasksError } = await supabase
+        .from('tasks')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000')
 
-    if (profilesError) throw profilesError
+      if (tasksError) throw tasksError
+
+      const { error: profilesError } = await supabase
+        .from('profiles')
+        .update({
+          avatar_level: 0,
+          tasks_completed_today: 0,
+          completed_all_tasks_at: null,
+        })
+        .neq('id', '00000000-0000-0000-0000-000000000000')
+
+      if (profilesError) throw profilesError
+    }
 
     return NextResponse.json({
       success: true,

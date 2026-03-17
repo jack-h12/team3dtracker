@@ -70,11 +70,12 @@ BEGIN
     -- Delete all tasks for all users
     DELETE FROM tasks;
     
-    -- Reset avatar_level and tasks_completed_today for all users
+    -- Reset avatar_level, tasks_completed_today, and completed_all_tasks_at for all users
     UPDATE profiles
-    SET 
+    SET
       avatar_level = 0,
-      tasks_completed_today = 0;
+      tasks_completed_today = 0,
+      completed_all_tasks_at = NULL;
     
     -- Update the reset log
     UPDATE daily_reset_log
