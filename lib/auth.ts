@@ -189,3 +189,18 @@ export async function getCurrentProfile(): Promise<Profile | null> {
   return data
 }
 
+/**
+ * Fetch profile directly by user ID — avoids the redundant getSession()/getUser()
+ * round-trips that getCurrentProfile() does when we already know the user ID.
+ */
+export async function getProfileById(userId: string): Promise<Profile | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single()
+
+  if (error) throw error
+  return data
+}
+

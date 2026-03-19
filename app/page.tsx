@@ -16,7 +16,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
-import { getCurrentUser, getCurrentProfile, signOut, updatePassword } from '@/lib/auth'
+import { getCurrentUser, getCurrentProfile, getProfileById, signOut, updatePassword } from '@/lib/auth'
 import Auth from '@/components/Auth'
 import Tasks from '@/components/Tasks'
 import Avatar from '@/components/Avatar'
@@ -111,9 +111,9 @@ export default function Home() {
       
       if (session?.user) {
         setUser(session.user)
-        // Load profile in background, don't block UI
+        // Load profile — use getProfileById to avoid redundant getSession() calls
         try {
-          const userProfile = await getCurrentProfile()
+          const userProfile = await getProfileById(session.user.id)
           if (userProfile) {
             setProfile(userProfile)
             const adminStatus = await isAdmin(session.user.id)
@@ -157,22 +157,32 @@ export default function Home() {
         setShowPasswordReset(true)
       }
 
-      try {
-        if (session?.user) {
-          setUser(session.user)
-          const userProfile = await getCurrentProfile()
-          if (userProfile && mounted) {
-            setProfile(userProfile)
-            const adminStatus = await isAdmin(session.user.id)
-            if (mounted) setUserIsAdmin(adminStatus)
+      if (session?.user) {
+        setUser(session.user)
+        // Retry profile loading up to 3 times — the first attempt can fail
+        // if a token refresh races with the profile query (lock bypass).
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const userProfile = await getProfileById(session.user.id)
+            if (userProfile && mounted) {
+              setProfile(userProfile)
+              const adminStatus = await isAdmin(session.user.id)
+              if (mounted) setUserIsAdmin(adminStatus)
+            }
+            break // success
+          } catch (err) {
+            if (attempt === 3) {
+              console.error('Failed to load profile after 3 attempts:', err)
+            } else {
+              console.warn(`Profile load attempt ${attempt} failed, retrying...`)
+              await new Promise(r => setTimeout(r, 500 * attempt))
+            }
           }
-        } else {
-          setUser(null)
-          setProfile(null)
-          setUserIsAdmin(false)
         }
-      } catch (err) {
-        console.error('Error in auth state change:', err)
+      } else {
+        setUser(null)
+        setProfile(null)
+        setUserIsAdmin(false)
       }
     })
 
@@ -230,7 +240,7 @@ export default function Home() {
         if (!mounted || !session?.user) return
 
         setUser(session.user)
-        const userProfile = await getCurrentProfile()
+        const userProfile = await getProfileById(session.user.id)
         if (userProfile && mounted) {
           setProfile(userProfile)
           const adminStatus = await isAdmin(session.user.id)
@@ -252,7 +262,7 @@ export default function Home() {
 
   const loadProfile = useCallback(async (userId: string) => {
     try {
-      const userProfile = await getCurrentProfile()
+      const userProfile = await getProfileById(userId)
       if (userProfile) {
         setProfile(userProfile)
         // Check if user is admin
@@ -272,11 +282,25 @@ export default function Home() {
   }, [])
 
   const handleAuthSuccess = useCallback(async () => {
-    // Refresh the session and reload profile
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.user) {
-      setUser(session.user)
-      await loadProfile(session.user.id)
+    // After signIn(), onAuthStateChange fires and handles setting user/profile.
+    // We just provide a fallback in case the listener hasn't finished yet,
+    // wrapped in a timeout so Auth.tsx's login button never hangs forever.
+    try {
+      // Give onAuthStateChange listener a moment to process first
+      await new Promise(r => setTimeout(r, 500))
+
+      // If the listener already set the profile, we're done
+      // (check via getSession since React state isn't accessible in callbacks)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        setUser(session.user)
+        await loadProfile(session.user.id)
+      }
+    } catch (err) {
+      // Don't throw back to Auth.tsx — the onAuthStateChange listener
+      // will also try to set user/profile. Worst case, the recovery
+      // effect below will retry.
+      console.error('handleAuthSuccess error (non-fatal):', err)
     }
   }, [loadProfile])
 
@@ -305,6 +329,34 @@ export default function Home() {
       await loadProfile(user.id)
     }
   }, [user, loadProfile])
+
+  // Recovery effect: if we have a user but no profile (e.g. profile load
+  // failed during login due to a token race), retry loading the profile.
+  // This catches the case where both handleAuthSuccess and onAuthStateChange
+  // fail to load the profile — without this, the user would see the login
+  // screen again even though they're authenticated.
+  useEffect(() => {
+    if (!user || profile || loading) return
+
+    let cancelled = false
+    const recover = async () => {
+      console.warn('User authenticated but profile is null — attempting recovery')
+      try {
+        const userProfile = await getProfileById(user.id)
+        if (userProfile && !cancelled) {
+          setProfile(userProfile)
+          const adminStatus = await isAdmin(user.id)
+          if (!cancelled) setUserIsAdmin(adminStatus)
+        }
+      } catch (err) {
+        console.error('Profile recovery failed:', err)
+      }
+    }
+
+    // Small delay to avoid racing with in-flight profile loads
+    const timer = setTimeout(recover, 1500)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [user, profile, loading])
 
   const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault()
