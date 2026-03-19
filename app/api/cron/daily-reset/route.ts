@@ -44,6 +44,88 @@ export async function GET(request: NextRequest) {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
+    // ── Snapshot today's data before resetting ──────────────────────────
+    // Compute the snapshot date as today's date in Eastern time (the day
+    // that is ending at this 5 PM reset).
+    const snapshotDate = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'America/New_York',
+    }) // YYYY-MM-DD format
+
+    // Check if snapshot already exists for this date (idempotency guard)
+    const { data: existingSnapshot } = await supabase
+      .from('daily_leaderboard_snapshots')
+      .select('id')
+      .eq('snapshot_date', snapshotDate)
+      .limit(1)
+
+    if (!existingSnapshot || existingSnapshot.length === 0) {
+      // Snapshot tasks for all users
+      const { data: allTasks } = await supabase
+        .from('tasks')
+        .select('*')
+
+      if (allTasks && allTasks.length > 0) {
+        const taskSnapshots = allTasks.map((task: any) => ({
+          user_id: task.user_id,
+          snapshot_date: snapshotDate,
+          description: task.description,
+          reward: task.reward,
+          is_done: task.is_done,
+          task_order: task.task_order,
+        }))
+
+        const { error: taskSnapshotError } = await supabase
+          .from('daily_task_snapshots')
+          .insert(taskSnapshots)
+
+        if (taskSnapshotError) {
+          console.warn('Task snapshot failed:', taskSnapshotError.message)
+        }
+      }
+
+      // Snapshot the daily leaderboard (sorted by completion order)
+      const { data: allProfiles } = await supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_level, tasks_completed_today, completed_all_tasks_at, lifetime_exp')
+        .order('avatar_level', { ascending: false })
+
+      if (allProfiles && allProfiles.length > 0) {
+        // Sort using the same logic as the live leaderboard
+        const sorted = [...allProfiles].sort((a: any, b: any) => {
+          const aCompleted = a.completed_all_tasks_at != null
+          const bCompleted = b.completed_all_tasks_at != null
+          if (aCompleted && bCompleted) {
+            return new Date(a.completed_all_tasks_at).getTime() - new Date(b.completed_all_tasks_at).getTime()
+          }
+          if (aCompleted && !bCompleted) return -1
+          if (!aCompleted && bCompleted) return 1
+          if (b.avatar_level !== a.avatar_level) return b.avatar_level - a.avatar_level
+          return 0
+        })
+
+        const leaderboardSnapshots = sorted.map((profile: any, index: number) => ({
+          snapshot_date: snapshotDate,
+          user_id: profile.id,
+          username: profile.username,
+          display_name: profile.display_name,
+          avatar_level: profile.avatar_level,
+          tasks_completed_today: profile.tasks_completed_today,
+          completed_all_tasks_at: profile.completed_all_tasks_at,
+          lifetime_exp: profile.lifetime_exp,
+          rank: index + 1,
+        }))
+
+        const { error: lbSnapshotError } = await supabase
+          .from('daily_leaderboard_snapshots')
+          .insert(leaderboardSnapshots)
+
+        if (lbSnapshotError) {
+          console.warn('Leaderboard snapshot failed:', lbSnapshotError.message)
+        }
+      }
+    }
+
+    // ── Reset everything ────────────────────────────────────────────────
     // Reset everything for all users: delete tasks and reset profile counters.
     // This is the single source of truth for daily resets — the client does NOT
     // delete tasks itself (to avoid double-reset conflicts).

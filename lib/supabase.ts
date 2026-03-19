@@ -274,3 +274,28 @@ export type UserInventory = {
   quantity: number
   expires_at?: string | null // Expiration date for armour items (2 weeks from purchase)
 }
+
+export type DailyTaskSnapshot = {
+  id: string
+  user_id: string
+  snapshot_date: string
+  description: string
+  reward: string | null
+  is_done: boolean
+  task_order: number
+  created_at: string
+}
+
+export type DailyLeaderboardSnapshot = {
+  id: string
+  snapshot_date: string
+  user_id: string
+  username: string
+  display_name: string | null
+  avatar_level: number
+  tasks_completed_today: number
+  completed_all_tasks_at: string | null
+  lifetime_exp: number
+  rank: number
+  created_at: string
+}
