@@ -193,18 +193,27 @@ export let supabase = createSupabaseClient()
 
 // ── Tab-visibility session recovery ──────────────────────────────────
 // When the browser tab is hidden and later revealed, the Supabase auth
-// state can go stale. This single, module-level listener fires *before*
-// any component-level visibilitychange handlers (because the module is
-// imported before components mount) and tells Supabase to re-validate
-// the session so that subsequent data queries use a fresh token.
+// state can go stale. This listener tells Supabase to re-validate the
+// session so that subsequent data queries use a fresh token.
+//
+// We delay startAutoRefresh slightly so it doesn't race with
+// initAuth's getSession() call on first load. Without this, both can
+// try to refresh the same token simultaneously (the lock bypass means
+// they aren't serialised), one invalidates the token the other needs,
+// and the losing call fails → login appears to hang.
 if (typeof window !== 'undefined') {
+  let autoRefreshPaused = false
+
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      // startAutoRefresh re-enables the internal ticker AND runs the
-      // recovery flow that reads the session from storage, checks
-      // expiry, and refreshes the token if needed.
-      supabase.auth.startAutoRefresh()
+      if (autoRefreshPaused) {
+        autoRefreshPaused = false
+        // Small delay avoids racing with any getSession() call that
+        // fires immediately on tab-visible in component handlers.
+        setTimeout(() => supabase.auth.startAutoRefresh(), 2000)
+      }
     } else {
+      autoRefreshPaused = true
       supabase.auth.stopAutoRefresh()
     }
   })

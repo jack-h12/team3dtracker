@@ -21,12 +21,32 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  // DST guard: This cron is scheduled at both 21:00 and 22:00 UTC so that
+  // one invocation always hits 5 PM Eastern regardless of EST/EDT.
+  // Check the current Eastern hour and skip if it's not 5 PM (17:00).
+  const easternHour = parseInt(
+    new Date().toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hour12: false,
+    }),
+    10
+  )
+
+  if (easternHour !== 17) {
+    return NextResponse.json({
+      skipped: true,
+      message: `Current Eastern hour is ${easternHour}, not 17. Skipping reset.`,
+      timestamp: new Date().toISOString(),
+    })
+  }
+
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
-    // Call the same database function the admin reset uses.
-    // This is a SECURITY DEFINER function that bypasses RLS and
-    // resets all users regardless of whether they are logged in.
+    // Reset everything for all users: delete tasks and reset profile counters.
+    // This is the single source of truth for daily resets — the client does NOT
+    // delete tasks itself (to avoid double-reset conflicts).
     const { error: rpcError } = await supabase.rpc('admin_reset_all_daily_progress')
 
     if (rpcError) {

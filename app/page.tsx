@@ -15,9 +15,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase, resetSupabaseClient, forceResetSupabaseClient } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { getCurrentUser, getCurrentProfile, signOut, updatePassword } from '@/lib/auth'
-import { shouldResetTasks, resetDailyTasks } from '@/lib/tasks'
 import Auth from '@/components/Auth'
 import Tasks from '@/components/Tasks'
 import Avatar from '@/components/Avatar'
@@ -88,35 +87,19 @@ export default function Home() {
       // Note: process.env.NEXT_PUBLIC_* vars are replaced at build time by Next.js
       // They're available in both client and server, but we check here for safety
       
-      // Get session with aggressive timeout detection
-      // If this hangs, it means the Supabase client is stuck - we need to clear everything
+      // Get session - rely on the global fetch timeout (15s) in lib/supabase.ts
+      // rather than a manual race. A short (5s) timeout was causing false
+      // "no session" results on slow networks, which showed the login screen
+      // even though the user had a valid session.
       let session: any = null
       let sessionError: any = null
-      let timedOut = false
-      
-      const sessionPromise = supabase.auth.getSession()
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          timedOut = true
-          reject(new Error('Session check timeout'))
-        }, 5000) // 5 second timeout
-      })
-      
+
       try {
-        const result = await Promise.race([sessionPromise, timeoutPromise]) as { data: { session: any }, error: any }
+        const result = await supabase.auth.getSession()
         session = result.data?.session
         sessionError = result.error
       } catch (err: any) {
-        if (timedOut) {
-          // Session check timed out - this might be a temporary network blip
-          console.warn('Session check timed out - proceeding with soft failure')
-          // Don't force reset - that logs the user out!
-          // Just set loading to false so the UI can show something (or the user can retry)
-          setLoading(false)
-          return
-        } else {
-          sessionError = err
-        }
+        sessionError = err
       }
       
       if (sessionError) {
@@ -143,32 +126,26 @@ export default function Home() {
     } catch (err) {
       console.error('Error initializing auth:', err)
       setLoading(false)
-      // If initAuth fails completely, don't force reset - just log
-      if (err && typeof err === 'object' && 'message' in err && 
-          (err.message === 'Session check timeout' || String(err.message).includes('timeout'))) {
-        console.warn('Auth init failed due to timeout')
-      }
     }
   }
 
   useEffect(() => {
     let mounted = true
+    // Track whether init has completed so the watchdog knows to stand down.
+    // Using a local variable (not React state) avoids stale-closure issues.
+    let initCompleted = false
     let loadingTimeout: NodeJS.Timeout | null = null
 
-    // Watchdog: If loading takes too long, something is wrong
+    // Watchdog: If init hasn't completed after 20s, stop showing the spinner.
+    // Do NOT call resetSupabaseClient() here — that would orphan the
+    // onAuthStateChange listener registered below, so subsequent login
+    // events would be silently dropped.
     loadingTimeout = setTimeout(() => {
-      if (loading && mounted) {
-        console.warn('App stuck loading for 10+ seconds - trying soft reset')
-        // Just reset the client instance in memory, don't clear storage
-        resetSupabaseClient()
-        // Reload page as last resort but don't clear session
-        setTimeout(() => {
-          if (typeof window !== 'undefined' && mounted) {
-            window.location.reload()
-          }
-        }, 1000)
+      if (!initCompleted && mounted) {
+        console.warn('App stuck loading for 20+ seconds - giving up on init')
+        setLoading(false)
       }
-    }, 10000) // 10 second watchdog
+    }, 20000)
 
     // Register auth state listener FIRST so we catch PASSWORD_RECOVERY events
     // from the PKCE code exchange below
@@ -231,6 +208,7 @@ export default function Home() {
     }
 
     init().finally(() => {
+      initCompleted = true
       if (loadingTimeout) clearTimeout(loadingTimeout)
     })
 

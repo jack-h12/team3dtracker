@@ -17,8 +17,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getTodayTasks, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, resetDailyTasks, shouldResetAvatar, resetAvatar, updateTaskOrder } from '@/lib/tasks'
-import { getCurrentProfile } from '@/lib/auth'
+import { getTodayTasks, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, shouldResetAvatar, updateTaskOrder } from '@/lib/tasks'
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { supabase } from '@/lib/supabase'
@@ -77,42 +76,43 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   }), [userId])
 
   /**
-   * Handles daily reset checks and updates localStorage
-   * Only called on initial mount (checkReset=true) to avoid unnecessary checks
+   * Updates localStorage reset timestamps.
+   * The server cron handles the actual task/profile reset — the client
+   * only tracks when the last reset boundary passed so it knows to
+   * re-fetch fresh data.
    */
   const handleDailyReset = useCallback(async () => {
-    const profile = await getCurrentProfile()
-    if (!profile || !mountedRef.current) return
+    if (!mountedRef.current) return
 
     const keys = getResetKeys()
     const storedLastReset = localStorage.getItem(keys.taskReset)
     setLastReset(storedLastReset)
-    
-    // Check if tasks should reset (new day, past 5pm EST)
+
+    // If a reset boundary has passed, update the localStorage timestamp
+    // so the UI knows we're in a new day. The server cron already deleted
+    // the tasks — we just need to re-fetch (which loadTasks does next).
     if (storedLastReset && shouldResetTasks(storedLastReset)) {
-      await resetDailyTasks(userId)
       const newResetTime = new Date().toISOString()
       localStorage.setItem(keys.taskReset, newResetTime)
       if (mountedRef.current) setLastReset(newResetTime)
     } else if (!storedLastReset) {
-      // First time, set the reset timestamp
       const newResetTime = new Date().toISOString()
       localStorage.setItem(keys.taskReset, newResetTime)
       if (mountedRef.current) setLastReset(newResetTime)
     }
-    
-    // Check and reset avatar at 5pm EST (independent of task reset)
+
+    // Same for avatar reset tracking
     const storedLastAvatarReset = localStorage.getItem(keys.avatarReset)
     if (storedLastAvatarReset && shouldResetAvatar(storedLastAvatarReset)) {
-      await resetAvatar(userId)
       const newAvatarResetTime = new Date().toISOString()
       localStorage.setItem(keys.avatarReset, newAvatarResetTime)
+      // Notify parent to refresh profile (avatar_level was reset by server)
+      if (onTaskComplete) onTaskComplete()
     } else if (!storedLastAvatarReset) {
-      // First time, set the avatar reset timestamp
       const newAvatarResetTime = new Date().toISOString()
       localStorage.setItem(keys.avatarReset, newAvatarResetTime)
     }
-  }, [userId, getResetKeys])
+  }, [userId, getResetKeys, onTaskComplete])
 
   // ============================================================================
   // DATA LOADING
@@ -227,31 +227,27 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   // ============================================================================
 
   /**
-   * Checks if daily reset should occur and handles it
-   * Called periodically (every minute) to catch reset time
+   * Periodically checks if a reset boundary has passed.
+   * If so, re-fetches tasks from the server (the cron will have deleted them)
+   * and updates localStorage. Does NOT delete tasks client-side.
    */
   const checkReset = async () => {
     const keys = getResetKeys()
     const storedLastReset = localStorage.getItem(keys.taskReset)
-    
+
     if (storedLastReset && shouldResetTasks(storedLastReset)) {
-      await resetDailyTasks(userId)
       const newResetTime = new Date().toISOString()
       localStorage.setItem(keys.taskReset, newResetTime)
       setLastReset(newResetTime)
-      await loadTasks(false) // Reload tasks without checking reset again
+      // Re-fetch tasks — the server cron handles actual deletion
+      await loadTasks(false)
     }
-    
-    // Check and reset avatar at 5pm EST (independent of task reset)
+
     const storedLastAvatarReset = localStorage.getItem(keys.avatarReset)
     if (storedLastAvatarReset && shouldResetAvatar(storedLastAvatarReset)) {
-      await resetAvatar(userId)
       const newAvatarResetTime = new Date().toISOString()
       localStorage.setItem(keys.avatarReset, newAvatarResetTime)
-      // Reload profile to reflect avatar change
-      if (onTaskComplete) {
-        onTaskComplete()
-      }
+      if (onTaskComplete) onTaskComplete()
     }
   }
 

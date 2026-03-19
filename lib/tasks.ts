@@ -67,21 +67,31 @@ function getResetTimeToday(): Date {
 
 export function shouldResetTasks(lastResetDate: string | null): boolean {
   if (!lastResetDate) return false // Don't auto-reset if no last reset date
-  
+
   const lastReset = new Date(lastResetDate)
   const now = new Date()
-  const resetTime = getResetTimeToday()
-  
-  // Reset if:
-  // 1. We've passed today's reset time (5pm EST)
-  // 2. The last reset was before today's reset time
-  // This ensures we reset once per day at 5pm, even if checked multiple times
-  const lastResetTime = lastReset.getTime()
-  const resetTimeMs = resetTime.getTime()
   const nowMs = now.getTime()
-  
-  // Reset if we're past the reset time AND last reset was before today's reset time
-  return nowMs >= resetTimeMs && lastResetTime < resetTimeMs
+  const lastResetMs = lastReset.getTime()
+
+  // Find the most recent 5pm EST boundary that has already passed.
+  // This handles the case where the user missed multiple reset windows
+  // (e.g., didn't open the app for days). We need to check against the
+  // LATEST passed 5pm, not just today's 5pm.
+  const resetTimeToday = getResetTimeToday()
+  const resetTimeTodayMs = resetTimeToday.getTime()
+
+  // Determine the most recent reset boundary that has already passed
+  let mostRecentResetMs: number
+  if (nowMs >= resetTimeTodayMs) {
+    // We're past today's 5pm — today's 5pm is the most recent boundary
+    mostRecentResetMs = resetTimeTodayMs
+  } else {
+    // We're before today's 5pm — yesterday's 5pm is the most recent boundary
+    mostRecentResetMs = resetTimeTodayMs - 24 * 60 * 60 * 1000
+  }
+
+  // Reset if the last reset was before the most recent 5pm boundary
+  return lastResetMs < mostRecentResetMs
 }
 
 export async function getTodayTasks(userId: string, signal?: AbortSignal): Promise<Task[]> {
@@ -363,21 +373,23 @@ export async function updateTaskOrder(userId: string, taskOrders: { taskId: stri
 
 export function shouldResetAvatar(lastAvatarResetDate: string | null): boolean {
   if (!lastAvatarResetDate) return false // Don't auto-reset if no last reset date
-  
+
   const lastReset = new Date(lastAvatarResetDate)
   const now = new Date()
-  const resetTime = getResetTimeToday()
-  
-  // Reset if:
-  // 1. We've passed today's reset time (5pm EST)
-  // 2. The last reset was before today's reset time
-  // This ensures we reset once per day at 5pm, even if checked multiple times
-  const lastResetTime = lastReset.getTime()
-  const resetTimeMs = resetTime.getTime()
   const nowMs = now.getTime()
-  
-  // Reset if we're past the reset time AND last reset was before today's reset time
-  return nowMs >= resetTimeMs && lastResetTime < resetTimeMs
+  const lastResetMs = lastReset.getTime()
+
+  const resetTimeToday = getResetTimeToday()
+  const resetTimeTodayMs = resetTimeToday.getTime()
+
+  let mostRecentResetMs: number
+  if (nowMs >= resetTimeTodayMs) {
+    mostRecentResetMs = resetTimeTodayMs
+  } else {
+    mostRecentResetMs = resetTimeTodayMs - 24 * 60 * 60 * 1000
+  }
+
+  return lastResetMs < mostRecentResetMs
 }
 
 export async function resetAvatar(userId: string): Promise<void> {
