@@ -15,6 +15,7 @@
  */
 
 import { supabase } from './supabase'
+import { createAttackNotification } from './notifications'
 import type { ShopItem, UserInventory, Profile } from './supabase'
 
 export async function getShopItems(signal?: AbortSignal): Promise<ShopItem[]> {
@@ -251,11 +252,29 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
           .from('profiles') as any)
           .update({ lifetime_exp: newExp })
           .eq('id', targetUserId))
-        
+
         if (directUpdateError) {
           console.error('Error updating target EXP:', directUpdateError)
           throw new Error(`Failed to attack: ${directUpdateError.message}. Please run fix-attack-and-gold-rls.sql in Supabase SQL Editor.`)
         }
+      }
+
+      // Send attack notification to the target
+      const { data: attackerProfile } = await supabase
+        .from('profiles')
+        .select('username, display_name')
+        .eq('id', userId)
+        .single()
+
+      if (attackerProfile) {
+        const attackerName = (attackerProfile as any).display_name || (attackerProfile as any).username
+        createAttackNotification(
+          targetUserId,
+          userId,
+          attackerName,
+          typedItem.name,
+          actualDamage
+        )
       }
     }
   } else if (typedItem.type === 'potion') {

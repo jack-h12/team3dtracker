@@ -27,6 +27,7 @@ import Admin from '@/components/Admin'
 import HowToPlay from '@/components/HowToPlay'
 import Calendar from '@/components/Calendar'
 import Modal from '@/components/Modal'
+import Inbox from '@/components/Inbox'
 import { isAdmin } from '@/lib/admin'
 import { setModalStateSetter, getModalState, closeModal } from '@/lib/modal'
 import type { Profile } from '@/lib/supabase'
@@ -628,6 +629,7 @@ export default function Home() {
               <span style={{ fontSize: '10px', color: '#888', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reset in</span>
               <span style={{ fontSize: 'clamp(13px, 2.5vw, 16px)', fontWeight: 700, color: '#ff6b35', fontVariantNumeric: 'tabular-nums' }}>{resetCountdown}</span>
             </div>
+            <Inbox userId={user.id} />
             <div style={{
               padding: '6px 12px',
               background: 'rgba(255, 107, 53, 0.1)',
