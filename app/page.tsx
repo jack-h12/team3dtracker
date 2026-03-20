@@ -86,30 +86,34 @@ export default function Home() {
   // Function to initialize auth and load user data
   const initAuth = async () => {
     try {
-      // Note: process.env.NEXT_PUBLIC_* vars are replaced at build time by Next.js
-      // They're available in both client and server, but we check here for safety
-      
-      // Get session - rely on the global fetch timeout (15s) in lib/supabase.ts
-      // rather than a manual race. A short (5s) timeout was causing false
-      // "no session" results on slow networks, which showed the login screen
-      // even though the user had a valid session.
+      // Try getSession first (reads from memory/localStorage, should be fast)
       let session: any = null
-      let sessionError: any = null
 
       try {
         const result = await supabase.auth.getSession()
         session = result.data?.session
-        sessionError = result.error
       } catch (err: any) {
-        sessionError = err
+        console.error('Error getting session:', err)
       }
-      
-      if (sessionError) {
-        console.error('Error getting session:', sessionError)
-        setLoading(false)
-        return
+
+      // If getSession returned null, try getUser as a fallback.
+      // getSession reads from local storage and can return null if the
+      // in-memory state is stale, but getUser validates against the server
+      // and can recover the session.
+      if (!session) {
+        try {
+          const { data: { user: validatedUser } } = await supabase.auth.getUser()
+          if (validatedUser) {
+            // getUser succeeded — the session exists server-side.
+            // Re-read getSession which should now be populated.
+            const retry = await supabase.auth.getSession()
+            session = retry.data?.session
+          }
+        } catch {
+          // getUser failed — genuinely no session
+        }
       }
-      
+
       if (session?.user) {
         setUser(session.user)
         // Load profile — use getProfileById to avoid redundant getSession() calls
@@ -122,6 +126,7 @@ export default function Home() {
           }
         } catch (profileError) {
           console.error('Error loading profile:', profileError)
+          // user is set but profile failed — the recovery UI will handle this
         }
       }
       setLoading(false)
@@ -282,25 +287,36 @@ export default function Home() {
     }
   }, [])
 
-  const handleAuthSuccess = useCallback(async () => {
-    // After signIn(), onAuthStateChange fires and handles setting user/profile.
-    // We just provide a fallback in case the listener hasn't finished yet,
-    // wrapped in a timeout so Auth.tsx's login button never hangs forever.
+  const handleAuthSuccess = useCallback(async (session?: { user: { id: string } }) => {
+    // Use the session passed directly from signIn when available — this avoids
+    // a redundant getSession() call that can race with onAuthStateChange and fail.
     try {
-      // Give onAuthStateChange listener a moment to process first
-      await new Promise(r => setTimeout(r, 500))
+      let sessionUser: User | null = null
 
-      // If the listener already set the profile, we're done
-      // (check via getSession since React state isn't accessible in callbacks)
-      const { data: { session } } = await supabase.auth.getSession()
       if (session?.user) {
-        setUser(session.user)
-        await loadProfile(session.user.id)
+        // We have a partial user from Auth.tsx — read the full user from the
+        // Supabase client which should have it cached from the signIn call.
+        const { data: { session: fullSession } } = await supabase.auth.getSession()
+        sessionUser = fullSession?.user ?? null
+
+        // If getSession still failed, construct a minimal user to unblock
+        // profile loading — the onAuthStateChange listener will set the
+        // full user shortly.
+        if (!sessionUser) {
+          sessionUser = { id: session.user.id } as User
+        }
+      } else {
+        // Fallback: read from Supabase if no session was passed (e.g. signup flow)
+        await new Promise(r => setTimeout(r, 500))
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
+        sessionUser = currentSession?.user ?? null
+      }
+
+      if (sessionUser) {
+        setUser(sessionUser)
+        await loadProfile(sessionUser.id)
       }
     } catch (err) {
-      // Don't throw back to Auth.tsx — the onAuthStateChange listener
-      // will also try to set user/profile. Worst case, the recovery
-      // effect below will retry.
       console.error('handleAuthSuccess error (non-fatal):', err)
     }
   }, [loadProfile])
@@ -332,31 +348,36 @@ export default function Home() {
   }, [user, loadProfile])
 
   // Recovery effect: if we have a user but no profile (e.g. profile load
-  // failed during login due to a token race), retry loading the profile.
-  // This catches the case where both handleAuthSuccess and onAuthStateChange
-  // fail to load the profile — without this, the user would see the login
-  // screen again even though they're authenticated.
+  // failed during login due to a token race), retry loading the profile
+  // with exponential backoff. This catches the case where both
+  // handleAuthSuccess and onAuthStateChange fail to load the profile.
   useEffect(() => {
     if (!user || profile || loading) return
 
     let cancelled = false
     const recover = async () => {
-      console.warn('User authenticated but profile is null — attempting recovery')
-      try {
-        const userProfile = await getProfileById(user.id)
-        if (userProfile && !cancelled) {
-          setProfile(userProfile)
-          const adminStatus = await isAdmin(user.id)
-          if (!cancelled) setUserIsAdmin(adminStatus)
+      const delays = [500, 1500, 3000]
+      for (let i = 0; i < delays.length; i++) {
+        if (cancelled) return
+        await new Promise(r => setTimeout(r, delays[i]))
+        if (cancelled) return
+        console.warn(`Profile recovery attempt ${i + 1}/${delays.length}`)
+        try {
+          const userProfile = await getProfileById(user.id)
+          if (userProfile && !cancelled) {
+            setProfile(userProfile)
+            const adminStatus = await isAdmin(user.id)
+            if (!cancelled) setUserIsAdmin(adminStatus)
+            return // success
+          }
+        } catch (err) {
+          console.error(`Profile recovery attempt ${i + 1} failed:`, err)
         }
-      } catch (err) {
-        console.error('Profile recovery failed:', err)
       }
     }
 
-    // Small delay to avoid racing with in-flight profile loads
-    const timer = setTimeout(recover, 1500)
-    return () => { cancelled = true; clearTimeout(timer) }
+    recover()
+    return () => { cancelled = true }
   }, [user, profile, loading])
 
   const handlePasswordReset = async (e: React.FormEvent) => {
@@ -544,10 +565,82 @@ export default function Home() {
     )
   }
 
-  if (!user || !profile) {
+  if (!user) {
     return (
       <>
         <Auth onAuthSuccess={handleAuthSuccess} />
+        {passwordResetModal}
+      </>
+    )
+  }
+
+  if (!profile) {
+    // User is authenticated but profile hasn't loaded yet — show a loading
+    // screen instead of the login form. The recovery effect will retry.
+    return (
+      <>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100vh',
+          background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0f0f0f 100%)'
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{
+              width: '50px',
+              height: '50px',
+              border: '4px solid #2a2a2a',
+              borderTop: '4px solid #ff6b35',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              margin: '0 auto 20px'
+            }}></div>
+            <p style={{ color: '#888', fontSize: '16px', fontWeight: 500, marginBottom: '20px' }}>Loading your profile...</p>
+            <button
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '10px 24px',
+                background: 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)',
+                color: '#ccc',
+                border: '1px solid #3a3a3a',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                marginBottom: '10px'
+              }}
+            >
+              Refresh Page
+            </button>
+            <br />
+            <button
+              onClick={async () => {
+                await signOut()
+                setUser(null)
+                setProfile(null)
+              }}
+              style={{
+                padding: '8px 20px',
+                background: 'transparent',
+                color: '#666',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: 500,
+                fontSize: '12px',
+                marginTop: '8px'
+              }}
+            >
+              Sign out instead
+            </button>
+          </div>
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
         {passwordResetModal}
       </>
     )

@@ -17,7 +17,7 @@ import { signUp, signIn, resetPassword } from '@/lib/auth'
 type AuthMode = 'login' | 'signup' | 'forgot'
 
 interface AuthProps {
-  onAuthSuccess: () => void
+  onAuthSuccess: (session?: { user: { id: string } }) => void
 }
 
 export default function Auth({ onAuthSuccess }: AuthProps) {
@@ -46,8 +46,8 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       }
 
       if (isLogin) {
-        await signIn(email, password)
-        await onAuthSuccess()
+        const data = await signIn(email, password)
+        await onAuthSuccess(data?.session ?? undefined)
       } else {
         if (!username.trim()) {
           setError('Username is required')
