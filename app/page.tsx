@@ -83,79 +83,25 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [])
 
-  // Function to initialize auth and load user data
-  const initAuth = async () => {
-    try {
-      // Try getSession first (reads from memory/localStorage, should be fast)
-      let session: any = null
-
-      try {
-        const result = await supabase.auth.getSession()
-        session = result.data?.session
-      } catch (err: any) {
-        console.error('Error getting session:', err)
-      }
-
-      // If getSession returned null, try getUser as a fallback.
-      // getSession reads from local storage and can return null if the
-      // in-memory state is stale, but getUser validates against the server
-      // and can recover the session.
-      if (!session) {
-        try {
-          const { data: { user: validatedUser } } = await supabase.auth.getUser()
-          if (validatedUser) {
-            // getUser succeeded — the session exists server-side.
-            // Re-read getSession which should now be populated.
-            const retry = await supabase.auth.getSession()
-            session = retry.data?.session
-          }
-        } catch {
-          // getUser failed — genuinely no session
-        }
-      }
-
-      if (session?.user) {
-        setUser(session.user)
-        // Load profile — use getProfileById to avoid redundant getSession() calls
-        try {
-          const userProfile = await getProfileById(session.user.id)
-          if (userProfile) {
-            setProfile(userProfile)
-            const adminStatus = await isAdmin(session.user.id)
-            setUserIsAdmin(adminStatus)
-          }
-        } catch (profileError) {
-          console.error('Error loading profile:', profileError)
-          // user is set but profile failed — the recovery UI will handle this
-        }
-      }
-      setLoading(false)
-    } catch (err) {
-      console.error('Error initializing auth:', err)
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
     let mounted = true
-    // Track whether init has completed so the watchdog knows to stand down.
-    // Using a local variable (not React state) avoids stale-closure issues.
-    let initCompleted = false
     let loadingTimeout: NodeJS.Timeout | null = null
 
-    // Watchdog: If init hasn't completed after 20s, stop showing the spinner.
-    // Do NOT call resetSupabaseClient() here — that would orphan the
-    // onAuthStateChange listener registered below, so subsequent login
-    // events would be silently dropped.
+    // Watchdog: If INITIAL_SESSION hasn't fired after 20s, stop the spinner.
     loadingTimeout = setTimeout(() => {
-      if (!initCompleted && mounted) {
+      if (mounted) {
         console.warn('App stuck loading for 20+ seconds - giving up on init')
         setLoading(false)
       }
     }, 20000)
 
-    // Register auth state listener FIRST so we catch PASSWORD_RECOVERY events
-    // from the PKCE code exchange below
+    // Capture PKCE code before registering the listener (prevents reload loops)
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (code) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return
 
@@ -163,6 +109,67 @@ export default function Home() {
         setShowPasswordReset(true)
       }
 
+      if (event === 'INITIAL_SESSION') {
+        // INITIAL_SESSION is the single authoritative initial auth check.
+        // It fires exactly once per subscription, so setting loading=false here
+        // eliminates the race between a separate initAuth() call and this handler.
+
+        // Handle PKCE code exchange (password reset, email confirmation, etc.)
+        // With detectSessionInUrl disabled, we must exchange the code manually.
+        if (code) {
+          try {
+            await supabase.auth.exchangeCodeForSession(code)
+            // Exchange succeeded — the resulting PASSWORD_RECOVERY or SIGNED_IN
+            // event will fire and set user/profile via the post-initial branch.
+            if (mounted) {
+              if (loadingTimeout) clearTimeout(loadingTimeout)
+              setLoading(false)
+            }
+            return
+          } catch (err) {
+            console.error('Error exchanging auth code:', err)
+            // Exchange failed — fall through to normal session check below
+          }
+        }
+
+        // With the Web Locks bypass, getSession() can return null during a
+        // concurrent token refresh. Try getUser() as a server-side fallback.
+        let activeSession = session
+        if (!activeSession) {
+          try {
+            const { data: { user: validatedUser } } = await supabase.auth.getUser()
+            if (validatedUser) {
+              const { data: { session: retrySession } } = await supabase.auth.getSession()
+              activeSession = retrySession
+            }
+          } catch {
+            // getUser failed — genuinely no session
+          }
+        }
+
+        if (activeSession?.user && mounted) {
+          setUser(activeSession.user)
+          try {
+            const userProfile = await getProfileById(activeSession.user.id)
+            if (userProfile && mounted) {
+              setProfile(userProfile)
+              const adminStatus = await isAdmin(activeSession.user.id)
+              if (mounted) setUserIsAdmin(adminStatus)
+            }
+          } catch (profileError) {
+            console.error('Error loading profile:', profileError)
+            // user is set but profile failed — the recovery UI will handle this
+          }
+        }
+
+        if (mounted) {
+          if (loadingTimeout) clearTimeout(loadingTimeout)
+          setLoading(false)
+        }
+        return
+      }
+
+      // Post-initial auth state changes (SIGNED_IN, TOKEN_REFRESHED, etc.)
       if (session?.user) {
         setUser(session.user)
         // Retry profile loading up to 3 times — the first attempt can fail
@@ -185,48 +192,14 @@ export default function Home() {
             }
           }
         }
-      } else {
+      } else if (event === 'SIGNED_OUT') {
+        // Only clear user on explicit sign-out — not on transient null-session
+        // events (e.g. INITIAL_SESSION during a token refresh race) which
+        // previously caused the login screen to flash on every app reopen.
         setUser(null)
         setProfile(null)
         setUserIsAdmin(false)
       }
-    })
-
-    // Handle PKCE auth code exchange (password reset, email confirmation, etc.)
-    // With flowType: 'pkce', Supabase redirects back with a ?code= query param
-    // that must be explicitly exchanged for a session. We do this manually
-    // (detectSessionInUrl is disabled) so the listener above is ready to catch
-    // the PASSWORD_RECOVERY event.
-    const params = new URLSearchParams(window.location.search)
-    const code = params.get('code')
-
-    // Clean the code from the URL immediately to prevent reload loops
-    // (the watchdog reloads the page if loading hangs)
-    if (code) {
-      window.history.replaceState({}, '', window.location.pathname)
-    }
-
-    const init = async () => {
-      if (code) {
-        try {
-          await supabase.auth.exchangeCodeForSession(code)
-          // Exchange succeeded — onAuthStateChange will fire with the
-          // correct event (PASSWORD_RECOVERY, SIGNED_IN, etc.) and
-          // set user/profile state. Just clear loading.
-          if (mounted) setLoading(false)
-        } catch (err) {
-          console.error('Error exchanging auth code:', err)
-          // Fall through to normal initAuth
-          await initAuth()
-        }
-      } else {
-        await initAuth()
-      }
-    }
-
-    init().finally(() => {
-      initCompleted = true
-      if (loadingTimeout) clearTimeout(loadingTimeout)
     })
 
     // Session recovery on tab switch is handled by the module-level
