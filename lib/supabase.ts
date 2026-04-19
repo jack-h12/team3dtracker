@@ -248,6 +248,7 @@ export type Task = {
   reward: string | null
   is_done: boolean
   task_order: number
+  task_date: string // YYYY-MM-DD, day the task belongs to (in Eastern task-day terms)
   created_at: string
 }
 

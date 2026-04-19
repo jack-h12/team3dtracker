@@ -59,10 +59,12 @@ export async function GET(request: NextRequest) {
       .limit(1)
 
     if (!existingSnapshot || existingSnapshot.length === 0) {
-      // Snapshot tasks for all users
+      // Snapshot tasks for all users — only the day that's ending.
+      // Future-dated tasks (user-planned up to 7 days ahead) are left alone.
       const { data: allTasks } = await supabase
         .from('tasks')
         .select('*')
+        .eq('task_date', snapshotDate)
 
       if (allTasks && allTasks.length > 0) {
         const taskSnapshots = allTasks.map((task: any) => ({
@@ -126,33 +128,26 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Reset everything ────────────────────────────────────────────────
-    // Reset everything for all users: delete tasks and reset profile counters.
-    // This is the single source of truth for daily resets — the client does NOT
-    // delete tasks itself (to avoid double-reset conflicts).
-    const { error: rpcError } = await supabase.rpc('admin_reset_all_daily_progress')
+    // Delete only tasks for the day that's ending — future-dated tasks must
+    // survive the reset. We always scope the delete client-side here rather
+    // than relying on admin_reset_all_daily_progress, which wipes every row.
+    const { error: tasksError } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('task_date', snapshotDate)
 
-    if (rpcError) {
-      // Fallback: if the RPC function doesn't exist, do it manually
-      console.warn('RPC function failed, falling back to manual reset:', rpcError.message)
+    if (tasksError) throw tasksError
 
-      const { error: tasksError } = await supabase
-        .from('tasks')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000')
+    const { error: profilesError } = await supabase
+      .from('profiles')
+      .update({
+        avatar_level: 0,
+        tasks_completed_today: 0,
+        completed_all_tasks_at: null,
+      })
+      .neq('id', '00000000-0000-0000-0000-000000000000')
 
-      if (tasksError) throw tasksError
-
-      const { error: profilesError } = await supabase
-        .from('profiles')
-        .update({
-          avatar_level: 0,
-          tasks_completed_today: 0,
-          completed_all_tasks_at: null,
-        })
-        .neq('id', '00000000-0000-0000-0000-000000000000')
-
-      if (profilesError) throw profilesError
-    }
+    if (profilesError) throw profilesError
 
     // Clean up expired armour from all users' inventories
     const { error: armourCleanupError } = await supabase

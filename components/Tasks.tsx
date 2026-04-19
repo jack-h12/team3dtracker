@@ -17,7 +17,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getTodayTasks, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, shouldResetAvatar, updateTaskOrder } from '@/lib/tasks'
+import { getTodayTasks, getTasksForDate, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, shouldResetAvatar, updateTaskOrder, getCurrentTaskDate, addDays, copyTasksFromPreviousDay } from '@/lib/tasks'
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { supabase } from '@/lib/supabase'
@@ -37,6 +37,16 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [newTask, setNewTask] = useState('')
   const [newReward, setNewReward] = useState('')
+
+  // Date navigation: today → today+7 inclusive
+  const todayDate = getCurrentTaskDate()
+  const [selectedDate, setSelectedDate] = useState<string>(todayDate)
+  const isToday = selectedDate === todayDate
+  const dayOffset = Math.round(
+    (new Date(selectedDate + 'T00:00:00Z').getTime() - new Date(todayDate + 'T00:00:00Z').getTime()) / 86400000
+  )
+  const canGoPrev = dayOffset > 0
+  const canGoNext = dayOffset < 7
   
   // Loading states
   // - `loading`: Controls UI loading indicator and disables interactive elements
@@ -173,8 +183,9 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       }
 
       // Fetch tasks with retry and timeout handling
+      const dateToLoad = selectedDate
       const taskList = await withRetry(
-        ({ signal }) => getTodayTasks(userId, signal),
+        ({ signal }) => getTasksForDate(userId, dateToLoad, signal),
         { maxRetries: 3, timeout: 15000 }
       );
 
@@ -196,7 +207,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         try {
           await supabase.auth.refreshSession();
           const taskList = await withRetry(
-            ({ signal }) => getTodayTasks(userId, signal),
+            ({ signal }) => getTasksForDate(userId, selectedDate, signal),
             { maxRetries: 1, timeout: 10000 }
           );
           if (mountedRef.current) {
@@ -217,7 +228,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       }
       console.log("Tasks: loadTasks completed, isLoading:", isLoadingRef.current);
     }
-  }, [userId, handleDailyReset]);
+  }, [userId, handleDailyReset, selectedDate]);
 
   // Store latest loadTasks in ref so visibility handler always has current version
   loadTasksRef.current = loadTasks
@@ -314,6 +325,18 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]) // loadTasks and checkReset are stable - they use refs for state management
 
+  // Reload tasks when the user picks a different day
+  useEffect(() => {
+    if (!mountedRef.current) return
+    // Skip the very first run — the main effect already kicked off a load
+    if (!hasInitialDataRef.current) return
+    isLoadingRef.current = false
+    hasInitialDataRef.current = false
+    setTasks([])
+    loadTasks(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate])
+
   // ============================================================================
   // CRUD HANDLERS
   // ============================================================================
@@ -324,12 +347,24 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
 
     setLoading(true)
     try {
-      const task = await addTask(userId, newTask.trim(), newReward.trim() || null)
+      const task = await addTask(userId, newTask.trim(), newReward.trim() || null, selectedDate)
       setTasks([...tasks, task])
       setNewTask('')
       setNewReward('')
     } catch (err: any) {
       await showModal('Error', err.message || 'Failed to add task', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCopyFromPreviousDay = async () => {
+    setLoading(true)
+    try {
+      const inserted = await copyTasksFromPreviousDay(userId, selectedDate)
+      setTasks([...tasks, ...inserted])
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to copy tasks', 'error')
     } finally {
       setLoading(false)
     }
@@ -572,6 +607,88 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         <p style={{ color: '#888', fontSize: 'clamp(12px, 3vw, 14px)', fontWeight: 500 }}>
           Complete tasks to level up • {tasks.length}/10 slots used
         </p>
+
+        {/* Day toggler */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px',
+          marginTop: '18px',
+          padding: '10px 14px',
+          background: '#0a0a0a',
+          border: '1px solid #3a3a3a',
+          borderRadius: '12px'
+        }}>
+          <button
+            onClick={() => canGoPrev && setSelectedDate(addDays(selectedDate, -1))}
+            disabled={!canGoPrev || loading}
+            style={{
+              padding: '8px 14px',
+              background: canGoPrev && !loading ? 'rgba(255, 107, 53, 0.15)' : '#1a1a1a',
+              color: canGoPrev && !loading ? '#ff6b35' : '#555',
+              border: '1px solid ' + (canGoPrev && !loading ? 'rgba(255, 107, 53, 0.4)' : '#2a2a2a'),
+              borderRadius: '8px',
+              cursor: canGoPrev && !loading ? 'pointer' : 'not-allowed',
+              fontWeight: 700,
+              fontSize: '13px'
+            }}
+          >
+            ◀ PREV
+          </button>
+          <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: '15px' }}>
+              {isToday
+                ? 'TODAY'
+                : dayOffset === 1
+                ? 'TOMORROW'
+                : new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase()}
+            </div>
+            <div style={{ color: '#888', fontSize: '12px', fontWeight: 500 }}>
+              {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              {!isToday && ` • +${dayOffset} day${dayOffset === 1 ? '' : 's'}`}
+            </div>
+          </div>
+          <button
+            onClick={() => canGoNext && setSelectedDate(addDays(selectedDate, 1))}
+            disabled={!canGoNext || loading}
+            style={{
+              padding: '8px 14px',
+              background: canGoNext && !loading ? 'rgba(255, 107, 53, 0.15)' : '#1a1a1a',
+              color: canGoNext && !loading ? '#ff6b35' : '#555',
+              border: '1px solid ' + (canGoNext && !loading ? 'rgba(255, 107, 53, 0.4)' : '#2a2a2a'),
+              borderRadius: '8px',
+              cursor: canGoNext && !loading ? 'pointer' : 'not-allowed',
+              fontWeight: 700,
+              fontSize: '13px'
+            }}
+          >
+            NEXT ▶
+          </button>
+        </div>
+
+        {/* Copy-from-previous-day button */}
+        <button
+          onClick={handleCopyFromPreviousDay}
+          disabled={loading || tasks.length >= 10}
+          style={{
+            marginTop: '10px',
+            width: '100%',
+            padding: '10px 14px',
+            background: loading || tasks.length >= 10
+              ? '#1a1a1a'
+              : 'linear-gradient(135deg, rgba(255, 215, 0, 0.15) 0%, rgba(255, 165, 0, 0.1) 100%)',
+            color: loading || tasks.length >= 10 ? '#555' : '#ffd700',
+            border: '1px solid ' + (loading || tasks.length >= 10 ? '#2a2a2a' : 'rgba(255, 215, 0, 0.4)'),
+            borderRadius: '10px',
+            cursor: loading || tasks.length >= 10 ? 'not-allowed' : 'pointer',
+            fontWeight: 700,
+            fontSize: '13px',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          📋 COPY TASKS FROM PREVIOUS DAY
+        </button>
       </div>
       
       {/* Add Task Form */}
@@ -762,14 +879,16 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                   type="checkbox"
                   checked={task.is_done}
                   onChange={() => task.is_done ? handleUncompleteTask(task.id) : handleCompleteTask(task.id)}
-                  disabled={loading}
+                  disabled={loading || !isToday}
+                  title={!isToday ? "You can't check off tasks for a future day" : undefined}
                   style={{
                     marginRight: '16px',
                     width: '24px',
                     height: '24px',
-                    cursor: loading ? 'not-allowed' : 'pointer',
+                    cursor: loading || !isToday ? 'not-allowed' : 'pointer',
                     accentColor: '#ff6b35',
-                    flexShrink: 0
+                    flexShrink: 0,
+                    opacity: isToday ? 1 : 0.4
                   }}
                 />
                 {editingTaskId === task.id ? (

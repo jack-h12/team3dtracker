@@ -94,11 +94,35 @@ export function shouldResetTasks(lastResetDate: string | null): boolean {
   return lastResetMs < mostRecentResetMs
 }
 
-export async function getTodayTasks(userId: string, signal?: AbortSignal): Promise<Task[]> {
+// Returns the current "task day" in Eastern time as YYYY-MM-DD.
+// After 5pm Eastern the task day is tomorrow — this matches the
+// 5pm EST reset boundary enforced by the cron.
+export function getCurrentTaskDate(): string {
+  const now = new Date()
+  const easternHour = parseInt(
+    now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }),
+    10
+  )
+  const todayEastern = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  if (easternHour >= 17) {
+    return addDays(todayEastern, 1)
+  }
+  return todayEastern
+}
+
+export function addDays(dateStr: string, delta: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + delta)
+  return dt.toISOString().slice(0, 10)
+}
+
+export async function getTasksForDate(userId: string, date: string, signal?: AbortSignal): Promise<Task[]> {
   const query = supabase
     .from('tasks')
     .select('*')
     .eq('user_id', userId)
+    .eq('task_date', date)
     .order('task_order', { ascending: true })
 
   if (signal) {
@@ -111,9 +135,18 @@ export async function getTodayTasks(userId: string, signal?: AbortSignal): Promi
   return data || []
 }
 
-export async function addTask(userId: string, description: string, reward?: string | null): Promise<Task> {
-  // Check current task count
-  const currentTasks = await getTodayTasks(userId)
+export async function getTodayTasks(userId: string, signal?: AbortSignal): Promise<Task[]> {
+  return getTasksForDate(userId, getCurrentTaskDate(), signal)
+}
+
+export async function addTask(
+  userId: string,
+  description: string,
+  reward?: string | null,
+  taskDate?: string
+): Promise<Task> {
+  const date = taskDate || getCurrentTaskDate()
+  const currentTasks = await getTasksForDate(userId, date)
   if (currentTasks.length >= 10) {
     throw new Error('Maximum 10 tasks per day')
   }
@@ -126,12 +159,49 @@ export async function addTask(userId: string, description: string, reward?: stri
       reward: reward && reward.trim() ? reward.trim() : null,
       is_done: false,
       task_order: currentTasks.length,
+      task_date: date,
     })
     .select()
     .single())
 
   if (error) throw error
   return data
+}
+
+// Copies all tasks from (date - 1) into `date` as fresh, uncompleted tasks.
+// Skips tasks that would overflow the 10-per-day cap. Returns inserted tasks.
+export async function copyTasksFromPreviousDay(userId: string, date: string): Promise<Task[]> {
+  const prevDate = addDays(date, -1)
+  const [existing, source] = await Promise.all([
+    getTasksForDate(userId, date),
+    getTasksForDate(userId, prevDate),
+  ])
+
+  if (source.length === 0) {
+    throw new Error('No tasks found for the previous day')
+  }
+
+  const slotsAvailable = 10 - existing.length
+  if (slotsAvailable <= 0) {
+    throw new Error('This day is already full (10 tasks)')
+  }
+
+  const toInsert = source.slice(0, slotsAvailable).map((t, i) => ({
+    user_id: userId,
+    description: t.description,
+    reward: t.reward,
+    is_done: false,
+    task_order: existing.length + i,
+    task_date: date,
+  }))
+
+  const { data, error } = await ((supabase
+    .from('tasks') as any)
+    .insert(toInsert)
+    .select())
+
+  if (error) throw error
+  return (data || []) as Task[]
 }
 
 export async function updateTask(taskId: string, updates: Partial<Task>): Promise<Task> {
