@@ -137,59 +137,43 @@ export default function Home() {
       }
     })
 
-    // Single initial-load path. Proactively refreshes the session before
-    // the first profile fetch so we never query PostgREST with a stale JWT
-    // from localStorage (the root cause of the "loads forever on reopen"
-    // bug — the Web Locks bypass made concurrent refreshes race, so we
-    // force one clean refresh up front).
+    // Initial load: read the persisted session and fetch the profile
+    // directly. We deliberately do NOT call refreshSession() here —
+    // Supabase auto-refresh handles stale tokens lazily, and a proactive
+    // refresh on every cold open blocks the UI behind a 15s network call
+    // when the network is slow. If the access token is genuinely expired,
+    // the profile fetch will 401, which the recovery effect then retries
+    // with a forced refresh.
     const runInit = async () => {
       if (initialLoadHandled) return
       initialLoadHandled = true
 
       try {
-        // PKCE code exchange (password reset, email confirmation)
         if (code) {
           try {
             await supabase.auth.exchangeCodeForSession(code)
-            // The resulting SIGNED_IN / PASSWORD_RECOVERY event will set
-            // user/profile via the listener branch above.
-            return
+            return // SIGNED_IN / PASSWORD_RECOVERY listener takes over
           } catch (err) {
             console.error('Error exchanging auth code:', err)
-            // Fall through to normal session check
           }
         }
 
-        // Check for a persisted session without hitting the network.
-        const { data: { session: storedSession } } = await supabase.auth.getSession()
-        if (!storedSession) return // genuinely signed out
-
-        // Force a fresh JWT before any profile query. This avoids the
-        // classic cold-open race where localStorage has an expired access
-        // token and the first PostgREST request 401s.
-        let freshSession = storedSession
-        try {
-          const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession()
-          if (refreshError) throw refreshError
-          if (refreshed.session) freshSession = refreshed.session
-        } catch (err) {
-          console.warn('refreshSession failed on cold open, using stored session:', err)
-          // Fall through — stored session may still be valid.
-        }
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) return // signed out
 
         if (!mounted) return
-        setUser(freshSession.user)
+        setUser(session.user)
 
         try {
-          const userProfile = await getProfileById(freshSession.user.id)
+          const userProfile = await getProfileById(session.user.id)
           if (userProfile && mounted) {
             setProfile(userProfile)
-            const adminStatus = await isAdmin(freshSession.user.id)
+            const adminStatus = await isAdmin(session.user.id)
             if (mounted) setUserIsAdmin(adminStatus)
           }
         } catch (profileError) {
           console.error('Initial profile load failed:', profileError)
-          // Bounded recovery effect will retry.
+          // Recovery effect will retry with a forced refresh.
         }
       } finally {
         if (mounted) {
