@@ -86,6 +86,10 @@ export default function Home() {
   useEffect(() => {
     let mounted = true
     let loadingTimeout: NodeJS.Timeout | null = null
+    // Idempotency guard shared between the INITIAL_SESSION listener branch
+    // and the explicit getSession() fallback below. Whichever one resolves
+    // first wins; the other short-circuits.
+    let initialLoadHandled = false
 
     // Watchdog: If INITIAL_SESSION hasn't fired after 20s, stop the spinner.
     loadingTimeout = setTimeout(() => {
@@ -110,9 +114,11 @@ export default function Home() {
       }
 
       if (event === 'INITIAL_SESSION') {
-        // INITIAL_SESSION is the single authoritative initial auth check.
-        // It fires exactly once per subscription, so setting loading=false here
-        // eliminates the race between a separate initAuth() call and this handler.
+        // INITIAL_SESSION is the primary initial auth check. An explicit
+        // getSession() fallback also runs below in case this event is
+        // delayed or lost; whichever resolves first wins.
+        if (initialLoadHandled) return
+        initialLoadHandled = true
 
         // Handle PKCE code exchange (password reset, email confirmation, etc.)
         // With detectSessionInUrl disabled, we must exchange the code manually.
@@ -201,6 +207,59 @@ export default function Home() {
         setUserIsAdmin(false)
       }
     })
+
+    // Fallback initial session check — runs in parallel with the
+    // onAuthStateChange listener. If INITIAL_SESSION is delayed or lost
+    // (e.g. a token-refresh race on cold open of an already-signed-in
+    // session), this still kicks off profile loading so the app doesn't
+    // get stuck on the spinner.
+    const runFallbackInit = async () => {
+      // Give the listener a brief head start so it usually wins the race.
+      await new Promise(resolve => setTimeout(resolve, 600))
+      if (!mounted || initialLoadHandled) return
+
+      try {
+        let { data: { session } } = await supabase.auth.getSession()
+        if (!session) {
+          // Stored session may be mid-refresh — validate against the server.
+          try {
+            const { data: { user: validatedUser } } = await supabase.auth.getUser()
+            if (validatedUser) {
+              const { data: { session: retry } } = await supabase.auth.getSession()
+              session = retry
+            }
+          } catch {
+            // no session — user is genuinely signed out
+          }
+        }
+
+        if (initialLoadHandled || !mounted) return
+        initialLoadHandled = true
+
+        if (session?.user) {
+          setUser(session.user)
+          try {
+            const userProfile = await getProfileById(session.user.id)
+            if (userProfile && mounted) {
+              setProfile(userProfile)
+              const adminStatus = await isAdmin(session.user.id)
+              if (mounted) setUserIsAdmin(adminStatus)
+            }
+          } catch (profileError) {
+            console.error('Fallback init: profile load failed:', profileError)
+            // The profile recovery effect will retry.
+          }
+        }
+      } catch (err) {
+        console.warn('Fallback init failed:', err)
+      } finally {
+        if (mounted) {
+          if (loadingTimeout) clearTimeout(loadingTimeout)
+          setLoading(false)
+        }
+      }
+    }
+    runFallbackInit()
 
     // Session recovery on tab switch is handled by the module-level
     // visibilitychange listener in lib/supabase.ts (startAutoRefresh /
