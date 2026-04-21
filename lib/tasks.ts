@@ -293,7 +293,7 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
   const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
     user_id_param: userId,
     gold_increase: goldReward,
-    exp_increase: 5, // Award 5 EXP per task completed
+    exp_increase: 10, // Award 10 EXP per task completed
     new_level: newDailyLevel,
     tasks_completed_today: newTasksCompletedToday
   })
@@ -307,7 +307,7 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
       .from('profiles') as any)
       .update({
         avatar_level: newDailyLevel,
-        lifetime_exp: typedProfile.lifetime_exp + 5, // Award 5 EXP per task completed
+        lifetime_exp: typedProfile.lifetime_exp + 10, // Award 10 EXP per task completed
         gold: typedProfile.gold + goldReward,
         tasks_completed_today: newTasksCompletedToday,
       })
@@ -382,15 +382,15 @@ export async function uncompleteTask(taskId: string, userId: string, currentTask
       .eq('id', userId))
   }
 
-  // Reverse rewards: subtract 10 gold and 5 EXP
+  // Reverse rewards: subtract 10 gold and 10 EXP
   const newGold = Math.max(0, typedProfile.gold - 10)
-  const newExp = Math.max(0, typedProfile.lifetime_exp - 5)
+  const newExp = Math.max(0, typedProfile.lifetime_exp - 10)
   const newTasksCompletedToday = Math.max(0, (typedProfile.tasks_completed_today || 0) - 1)
 
   const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
     user_id_param: userId,
     gold_increase: -10,
-    exp_increase: -5,
+    exp_increase: -10,
     new_level: newDailyLevel,
     tasks_completed_today: newTasksCompletedToday
   })

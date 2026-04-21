@@ -121,12 +121,12 @@ CREATE POLICY "Users can manage own inventory" ON user_inventory
 -- ============================================
 
 INSERT INTO shop_items (name, type, cost, effect) VALUES
-  ('Wooden Sword', 'weapon', 50, '{"description": "Deals 10 EXP damage", "damage": 10}'),
-  ('Iron Sword', 'weapon', 150, '{"description": "Deals 25 EXP damage", "damage": 25}'),
-  ('Diamond Sword', 'weapon', 300, '{"description": "Deals 50 EXP damage", "damage": 50}'),
-  ('Leather Armour', 'armour', 100, '{"description": "Blocks 5 EXP damage per attack", "protection": 5}'),
-  ('Iron Armour', 'armour', 250, '{"description": "Blocks 15 EXP damage per attack", "protection": 15}'),
-  ('Diamond Armour', 'armour', 500, '{"description": "Blocks 30 EXP damage per attack", "protection": 30}'),
+  ('Wooden Sword', 'weapon', 50, '{"description": "Deals 30 EXP damage", "damage": 30}'),
+  ('Iron Sword', 'weapon', 150, '{"description": "Deals 120 EXP damage", "damage": 120}'),
+  ('Diamond Sword', 'weapon', 300, '{"description": "Deals 250 EXP damage", "damage": 250}'),
+  ('Leather Armour', 'armour', 100, '{"description": "Blocks 15 EXP damage per attack", "protection": 15}'),
+  ('Iron Armour', 'armour', 250, '{"description": "Blocks 60 EXP damage per attack", "protection": 60}'),
+  ('Diamond Armour', 'armour', 500, '{"description": "Blocks 125 EXP damage per attack", "protection": 125}'),
   ('Health Potion', 'potion', 75, '{"description": "24h immunity from attacks"}'),
   ('Super Potion', 'potion', 200, '{"description": "48h immunity from attacks"}'),
   ('Cool Hat', 'clothes', 25, '{"description": "Cosmetic item"}'),

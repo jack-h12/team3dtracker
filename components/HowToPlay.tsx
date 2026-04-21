@@ -49,7 +49,7 @@ export default function HowToPlay() {
               <strong style={{ color: '#fff', fontWeight: 700 }}>• Daily reset at 5pm EST</strong> - All tasks reset automatically, so stay consistent!
             </p>
             <p style={{ margin: 0 }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>• Each completed task</strong> gives you +5 lifetime EXP and increases your daily level
+              <strong style={{ color: '#fff', fontWeight: 700 }}>• Each completed task</strong> gives you +10 lifetime EXP and increases your daily level
             </p>
           </div>
         </div>
@@ -107,10 +107,10 @@ export default function HowToPlay() {
           </h3>
           <div style={{ color: '#ccc', fontSize: '15px', lineHeight: '1.8', fontWeight: 500 }}>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>⚔️ WEAPONS</strong> - Attack other players to reduce their lifetime EXP. Damage: Wooden Sword (10), Iron Sword (25), Diamond Sword (50)
+              <strong style={{ color: '#fff', fontWeight: 700 }}>⚔️ WEAPONS</strong> - Attack other players to reduce their lifetime EXP. Damage: Wooden Sword (30), Iron Sword (120), Diamond Sword (250)
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>🛡️ ARMOUR</strong> - Protects you from attacks. Protection: Leather (5 PROT.), Iron (15 PROT.), Diamond (30 PROT.). Only the highest protection armour counts - doesn't stack! <strong style={{ color: '#ff4444', fontWeight: 700 }}>Armour expires after 2 weeks</strong> - hover over armour to see time remaining!
+              <strong style={{ color: '#fff', fontWeight: 700 }}>🛡️ ARMOUR</strong> - Protects you from attacks. Protection: Leather (15 PROT.), Iron (60 PROT.), Diamond (125 PROT.). Only the highest protection armour counts - doesn't stack! <strong style={{ color: '#ff4444', fontWeight: 700 }}>Armour expires after 2 weeks</strong> - hover over armour to see time remaining!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>🧪 POTIONS</strong> - Give you temporary immunity from attacks (24h or 48h)
@@ -206,7 +206,7 @@ export default function HowToPlay() {
               <strong style={{ color: '#fff', fontWeight: 700 }}>• Attack Formula:</strong> Weapon Damage - Target's Highest Armour Protection = Actual Damage
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>• Example:</strong> Diamond Sword (50 damage) vs Leather Armour (5 PROT.) = 45 EXP lost
+              <strong style={{ color: '#fff', fontWeight: 700 }}>• Example:</strong> Diamond Sword (250 damage) vs Leather Armour (15 PROT.) = 235 EXP lost
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>• Armour doesn't stack!</strong> Only the highest protection armour piece counts. Multiple armour pieces don't add together
