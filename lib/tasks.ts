@@ -172,10 +172,25 @@ export async function addTask(
 // Skips tasks that would overflow the 10-per-day cap. Returns inserted tasks.
 export async function copyTasksFromPreviousDay(userId: string, date: string): Promise<Task[]> {
   const prevDate = addDays(date, -1)
-  const [existing, source] = await Promise.all([
+  const [existing, liveSource] = await Promise.all([
     getTasksForDate(userId, date),
     getTasksForDate(userId, prevDate),
   ])
+
+  // After the 5pm EST reset the prior day's tasks are deleted from `tasks`.
+  // The cron writes them to `daily_task_snapshots` first, so fall back there.
+  let source: { description: string; reward: string | null; task_order: number }[] = liveSource
+  if (source.length === 0) {
+    const { data: snapshot, error: snapshotError } = await supabase
+      .from('daily_task_snapshots')
+      .select('description, reward, task_order')
+      .eq('user_id', userId)
+      .eq('snapshot_date', prevDate)
+      .order('task_order', { ascending: true })
+
+    if (snapshotError) throw snapshotError
+    source = (snapshot || []) as any
+  }
 
   if (source.length === 0) {
     throw new Error('No tasks found for the previous day')
