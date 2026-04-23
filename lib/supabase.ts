@@ -300,3 +300,11 @@ export type DailyLeaderboardSnapshot = {
   rank: number
   created_at: string
 }
+
+export type DailyNote = {
+  id: string
+  user_id: string
+  note_date: string
+  content: string
+  updated_at: string
+}

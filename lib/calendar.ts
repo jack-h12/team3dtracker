@@ -8,7 +8,7 @@
  */
 
 import { supabase } from './supabase'
-import type { DailyTaskSnapshot, DailyLeaderboardSnapshot } from './supabase'
+import type { DailyTaskSnapshot, DailyLeaderboardSnapshot, DailyNote } from './supabase'
 
 export async function getAvailableDates(userId: string): Promise<string[]> {
   const { data, error } = await supabase
@@ -52,4 +52,27 @@ export async function getLeaderboardSnapshot(date: string): Promise<DailyLeaderb
 
   if (error) throw error
   return data || []
+}
+
+export async function getNoteSnapshot(userId: string, date: string): Promise<DailyNote | null> {
+  const { data, error } = await supabase
+    .from('daily_notes')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('note_date', date)
+    .maybeSingle()
+
+  if (error) throw error
+  return data
+}
+
+export async function getDatesWithNotes(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('daily_notes')
+    .select('note_date')
+    .eq('user_id', userId)
+    .neq('content', '')
+
+  if (error) throw error
+  return (data || []).map((d: { note_date: string }) => d.note_date)
 }

@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { getAvailableDates, getTaskSnapshot, getLeaderboardSnapshot } from '@/lib/calendar'
-import type { DailyTaskSnapshot, DailyLeaderboardSnapshot } from '@/lib/supabase'
+import { getAvailableDates, getTaskSnapshot, getLeaderboardSnapshot, getNoteSnapshot, getDatesWithNotes } from '@/lib/calendar'
+import type { DailyTaskSnapshot, DailyLeaderboardSnapshot, DailyNote } from '@/lib/supabase'
 
 interface CalendarProps {
   userId: string
@@ -14,21 +14,27 @@ export default function Calendar({ userId }: CalendarProps) {
     return { year: now.getFullYear(), month: now.getMonth() }
   })
   const [availableDates, setAvailableDates] = useState<Set<string>>(new Set())
+  const [datesWithNotes, setDatesWithNotes] = useState<Set<string>>(new Set())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [tasks, setTasks] = useState<DailyTaskSnapshot[]>([])
   const [leaderboard, setLeaderboard] = useState<DailyLeaderboardSnapshot[]>([])
+  const [note, setNote] = useState<DailyNote | null>(null)
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
 
-  // Load available dates
+  // Load available dates and dates with notes
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
         setLoading(true)
-        const dates = await getAvailableDates(userId)
+        const [dates, noteDates] = await Promise.all([
+          getAvailableDates(userId),
+          getDatesWithNotes(userId),
+        ])
         if (!cancelled) {
           setAvailableDates(new Set(dates))
+          setDatesWithNotes(new Set(noteDates))
         }
       } catch (err) {
         console.error('Error loading calendar dates:', err)
@@ -45,12 +51,14 @@ export default function Calendar({ userId }: CalendarProps) {
     setSelectedDate(date)
     setDetailLoading(true)
     try {
-      const [taskData, lbData] = await Promise.all([
+      const [taskData, lbData, noteData] = await Promise.all([
         getTaskSnapshot(userId, date),
         getLeaderboardSnapshot(date),
+        getNoteSnapshot(userId, date),
       ])
       setTasks(taskData)
       setLeaderboard(lbData)
+      setNote(noteData)
     } catch (err) {
       console.error('Error loading day details:', err)
     } finally {
@@ -163,6 +171,7 @@ export default function Calendar({ userId }: CalendarProps) {
               const day = i + 1
               const dateStr = formatDate(day)
               const hasData = availableDates.has(dateStr)
+              const hasNote = datesWithNotes.has(dateStr)
               const isSelected = selectedDate === dateStr
               const isToday = dateStr === todayStr
               const isFuture = dateStr > todayStr
@@ -211,15 +220,24 @@ export default function Calendar({ userId }: CalendarProps) {
                   }}
                 >
                   <span>{day}</span>
-                  {hasData && (
-                    <div style={{
-                      width: '5px',
-                      height: '5px',
-                      borderRadius: '50%',
-                      background: '#ff6b35',
-                      marginTop: '2px'
-                    }} />
-                  )}
+                  <div style={{ display: 'flex', gap: '3px', marginTop: '2px', minHeight: '5px' }}>
+                    {hasData && (
+                      <div style={{
+                        width: '5px',
+                        height: '5px',
+                        borderRadius: '50%',
+                        background: '#ff6b35'
+                      }} />
+                    )}
+                    {hasNote && (
+                      <div style={{
+                        width: '5px',
+                        height: '5px',
+                        borderRadius: '50%',
+                        background: '#7c6fff'
+                      }} />
+                    )}
+                  </div>
                 </button>
               )
             })}
@@ -354,6 +372,52 @@ export default function Calendar({ userId }: CalendarProps) {
                       </div>
                     )}
                   </div>
+
+                  {/* Note Section — private, only visible to owner via RLS */}
+                  {note && note.content && (
+                    <div style={{
+                      background: '#0a0a0a',
+                      borderRadius: '12px',
+                      border: '1px solid #3a3a2a',
+                      padding: '20px',
+                    }}>
+                      <h4 style={{
+                        fontSize: '16px',
+                        fontWeight: 700,
+                        color: '#fff',
+                        margin: '0 0 12px 0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span style={{ fontSize: '18px' }}>📝</span>
+                        Your Note
+                        <span style={{
+                          marginLeft: 'auto',
+                          fontSize: '11px',
+                          fontWeight: 500,
+                          color: '#555',
+                          padding: '2px 8px',
+                          background: 'rgba(124, 111, 255, 0.08)',
+                          border: '1px solid rgba(124, 111, 255, 0.2)',
+                          borderRadius: '8px'
+                        }}>
+                          Only visible to you
+                        </span>
+                      </h4>
+                      <p style={{
+                        color: '#ccc',
+                        fontSize: '14px',
+                        fontWeight: 400,
+                        lineHeight: '1.7',
+                        margin: 0,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word'
+                      }}>
+                        {note.content}
+                      </p>
+                    </div>
+                  )}
 
                   {/* Leaderboard Section */}
                   <div style={{

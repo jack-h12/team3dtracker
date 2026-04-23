@@ -21,6 +21,7 @@ import { getTodayTasks, getTasksForDate, addTask, completeTask, uncompleteTask, 
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { supabase } from '@/lib/supabase'
+import { getNoteForDate, upsertNote } from '@/lib/notes'
 import type { Task, Profile } from '@/lib/supabase'
 
 interface TasksProps {
@@ -63,7 +64,13 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   // Drag and drop state
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null)
-  
+
+  // Daily note state
+  const [note, setNote] = useState('')
+  const [noteSaveStatus, setNoteSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const noteSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const noteSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Component lifecycle tracking
   const mountedRef = useRef(true)
   // Simple flag to prevent duplicate calls - using ref for synchronous access
@@ -336,6 +343,39 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     loadTasks(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate])
+
+  // Load note whenever the selected date changes
+  useEffect(() => {
+    let cancelled = false
+    if (noteSaveTimerRef.current) clearTimeout(noteSaveTimerRef.current)
+    if (noteSavedTimerRef.current) clearTimeout(noteSavedTimerRef.current)
+    setNote('')
+    setNoteSaveStatus('idle')
+    getNoteForDate(userId, selectedDate)
+      .then((n) => { if (!cancelled) setNote(n?.content ?? '') })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [userId, selectedDate])
+
+  const handleNoteChange = (value: string) => {
+    setNote(value)
+    setNoteSaveStatus('saving')
+    if (noteSaveTimerRef.current) clearTimeout(noteSaveTimerRef.current)
+    if (noteSavedTimerRef.current) clearTimeout(noteSavedTimerRef.current)
+    noteSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await upsertNote(userId, selectedDate, value)
+        if (mountedRef.current) {
+          setNoteSaveStatus('saved')
+          noteSavedTimerRef.current = setTimeout(() => {
+            if (mountedRef.current) setNoteSaveStatus('idle')
+          }, 2000)
+        }
+      } catch {
+        if (mountedRef.current) setNoteSaveStatus('error')
+      }
+    }, 800)
+  }
 
   // ============================================================================
   // CRUD HANDLERS
@@ -1075,6 +1115,70 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Daily Note */}
+      <div style={{ marginTop: '30px' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '12px'
+        }}>
+          <h3 style={{
+            fontSize: '16px',
+            fontWeight: 700,
+            color: '#fff',
+            margin: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span style={{ fontSize: '18px' }}>📝</span>
+            Daily Note
+          </h3>
+          <span style={{
+            fontSize: '12px',
+            fontWeight: 600,
+            color: noteSaveStatus === 'saved' ? '#4caf50' : noteSaveStatus === 'error' ? '#ff4444' : noteSaveStatus === 'saving' ? '#888' : 'transparent',
+            transition: 'color 0.2s ease'
+          }}>
+            {noteSaveStatus === 'saving' ? 'Saving...' : noteSaveStatus === 'saved' ? '✓ Saved' : noteSaveStatus === 'error' ? 'Failed to save' : '·'}
+          </span>
+        </div>
+        <textarea
+          value={note}
+          onChange={(e) => handleNoteChange(e.target.value)}
+          placeholder="Write a note about your day..."
+          rows={5}
+          style={{
+            width: '100%',
+            padding: '14px 16px',
+            background: '#0a0a0a',
+            border: '1px solid #3a3a3a',
+            borderRadius: '12px',
+            color: '#fff',
+            fontSize: '14px',
+            fontWeight: 400,
+            lineHeight: '1.6',
+            resize: 'vertical',
+            outline: 'none',
+            fontFamily: 'inherit',
+            transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+            boxSizing: 'border-box'
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = '#ff6b35'
+            e.currentTarget.style.boxShadow = '0 0 0 3px rgba(255, 107, 53, 0.1)'
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = '#3a3a3a'
+            e.currentTarget.style.boxShadow = 'none'
+          }}
+        />
+        <p style={{ color: '#555', fontSize: '12px', fontWeight: 500, margin: '8px 0 0 0' }}>
+          Only visible to you
+        </p>
       </div>
     </div>
   )
