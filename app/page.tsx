@@ -26,6 +26,7 @@ import Shop from '@/components/Shop'
 import Admin from '@/components/Admin'
 import HowToPlay from '@/components/HowToPlay'
 import Calendar from '@/components/Calendar'
+import Testosterone from '@/components/Testosterone'
 import Modal from '@/components/Modal'
 import Inbox from '@/components/Inbox'
 import { isAdmin } from '@/lib/admin'
@@ -33,7 +34,7 @@ import { setModalStateSetter, getModalState, closeModal } from '@/lib/modal'
 import type { Profile } from '@/lib/supabase'
 import type { User } from '@supabase/supabase-js'
 
-type View = 'tasks' | 'leaderboard' | 'friends' | 'shop' | 'admin' | 'howtoplay' | 'calendar'
+type View = 'tasks' | 'leaderboard' | 'friends' | 'shop' | 'admin' | 'howtoplay' | 'calendar' | 'testosterone'
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null)
@@ -753,6 +754,7 @@ export default function Home() {
                   { id: 'friends', label: 'Friends', icon: '👥' },
                   { id: 'shop', label: 'Shop', icon: '🛒' },
                   { id: 'calendar', label: 'Calendar', icon: '📅' },
+                  { id: 'testosterone', label: '10 T Commandments', icon: '⚡' },
                   { id: 'howtoplay', label: 'How to Play', icon: '📖' }
                 ]
                 
@@ -830,6 +832,7 @@ export default function Home() {
               <Shop userId={user.id} onPurchase={handlePurchase} />
             )}
             {currentView === 'calendar' && <Calendar userId={user.id} />}
+            {currentView === 'testosterone' && <Testosterone userId={user.id} />}
             {currentView === 'howtoplay' && <HowToPlay />}
             {currentView === 'admin' ? (
               userIsAdmin ? (
