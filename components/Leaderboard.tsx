@@ -14,7 +14,8 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { getDailyLeaderboard, getLifetimeLeaderboard, getUserTasks } from '@/lib/leaderboard'
+import { getDailyLeaderboard, getLifetimeLeaderboard, getWeeklyLeaderboard, getUserTasks } from '@/lib/leaderboard'
+import type { WeeklyProfile } from '@/lib/leaderboard'
 import { getUserProfile } from '@/lib/friends'
 import { getDisplayName, supabase } from '@/lib/supabase'
 import { getUserInventory, getWeaponDamage, getProtectionValue } from '@/lib/shop'
@@ -24,8 +25,9 @@ import type { ShopItem, UserInventory } from '@/lib/supabase'
 import type { Profile, Task } from '@/lib/supabase'
 
 export default function Leaderboard() {
-  const [activeTab, setActiveTab] = useState<'daily' | 'lifetime'>('daily')
+  const [activeTab, setActiveTab] = useState<'daily' | 'weekly' | 'lifetime'>('daily')
   const [dailyUsers, setDailyUsers] = useState<Profile[]>([])
+  const [weeklyUsers, setWeeklyUsers] = useState<WeeklyProfile[]>([])
   const [lifetimeUsers, setLifetimeUsers] = useState<Profile[]>([])
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null)
   const [userTasks, setUserTasks] = useState<Task[]>([])
@@ -78,16 +80,18 @@ export default function Leaderboard() {
       
       // Fetch with retry and timeout handling
       // Use longer timeout and more retries for tab visibility scenarios
-      const [daily, lifetime] = await Promise.all([
+      const [daily, weekly, lifetime] = await Promise.all([
         withRetry(({ signal }) => getDailyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
+        withRetry(({ signal }) => getWeeklyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
         withRetry(({ signal }) => getLifetimeLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
       ])
-      
-      console.log('Leaderboard data fetched:', { daily: daily.length, lifetime: lifetime.length })
-      
+
+      console.log('Leaderboard data fetched:', { daily: daily.length, weekly: weekly.length, lifetime: lifetime.length })
+
       // Only update if component is still mounted
       if (mountedRef.current) {
         setDailyUsers(daily)
+        setWeeklyUsers(weekly)
         setLifetimeUsers(lifetime)
         // Mark that we've loaded initial data
         hasInitialDataRef.current = true
@@ -112,7 +116,11 @@ export default function Leaderboard() {
   useEffect(() => {
     if (!hasInitialDataRef.current) return
 
-    const currentUsers = activeTab === 'daily' ? dailyUsers : lifetimeUsers
+    const currentUsers: Profile[] = activeTab === 'daily'
+      ? dailyUsers
+      : activeTab === 'weekly'
+      ? weeklyUsers
+      : lifetimeUsers
     const topUsers = currentUsers.slice(0, 20) // Limit to top 20 to avoid too many API calls
 
     topUsers.forEach(user => {
@@ -130,7 +138,7 @@ export default function Leaderboard() {
           })
       }
     })
-  }, [activeTab, dailyUsers, lifetimeUsers])
+  }, [activeTab, dailyUsers, weeklyUsers, lifetimeUsers])
 
   useEffect(() => {
     mountedRef.current = true
@@ -225,9 +233,11 @@ export default function Leaderboard() {
     return 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)'
   }, [])
 
-  const currentUsers = useMemo(() => {
-    return activeTab === 'daily' ? dailyUsers : lifetimeUsers
-  }, [activeTab, dailyUsers, lifetimeUsers])
+  const currentUsers = useMemo<Profile[]>(() => {
+    if (activeTab === 'daily') return dailyUsers
+    if (activeTab === 'weekly') return weeklyUsers
+    return lifetimeUsers
+  }, [activeTab, dailyUsers, weeklyUsers, lifetimeUsers])
 
   return (
     <div>
@@ -280,6 +290,32 @@ export default function Leaderboard() {
           }}
         >
           💪 DAILY LEVEL
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('weekly')
+            setSelectedUser(null)
+          }}
+          style={{
+            flex: 1,
+            padding: '12px 8px',
+            background: activeTab === 'weekly'
+              ? 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)'
+              : 'transparent',
+            color: activeTab === 'weekly' ? '#fff' : '#888',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 700,
+            fontSize: 'clamp(11px, 2.5vw, 15px)',
+            transition: 'all 0.3s ease',
+            boxShadow: activeTab === 'weekly' ? '0 4px 15px rgba(255, 107, 53, 0.4)' : 'none',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}
+        >
+          📅 WEEKLY EXP
         </button>
         <button
           onClick={() => {
@@ -790,8 +826,16 @@ export default function Leaderboard() {
               {currentUsers.map((user, index) => {
                 const medal = getRankMedal(index)
                 const rankColor = getRankColor(index)
-                const value = activeTab === 'daily' ? user.avatar_level : user.lifetime_exp
-                const label = activeTab === 'daily' ? 'LEVEL' : 'EXP'
+                const value = activeTab === 'daily'
+                  ? user.avatar_level
+                  : activeTab === 'weekly'
+                  ? (user as WeeklyProfile).weekly_exp
+                  : user.lifetime_exp
+                const label = activeTab === 'daily'
+                  ? 'LEVEL'
+                  : activeTab === 'weekly'
+                  ? 'WEEK EXP'
+                  : 'EXP'
                 
                 return (
                   <div

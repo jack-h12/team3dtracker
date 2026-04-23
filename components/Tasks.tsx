@@ -879,16 +879,15 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                   type="checkbox"
                   checked={task.is_done}
                   onChange={() => task.is_done ? handleUncompleteTask(task.id) : handleCompleteTask(task.id)}
-                  disabled={loading || !isToday}
-                  title={!isToday ? "You can't check off tasks for a future day" : undefined}
+                  disabled={loading}
+                  title={!isToday ? "Counts toward today's level (capped at 10)" : undefined}
                   style={{
                     marginRight: '16px',
                     width: '24px',
                     height: '24px',
-                    cursor: loading || !isToday ? 'not-allowed' : 'pointer',
+                    cursor: loading ? 'not-allowed' : 'pointer',
                     accentColor: '#ff6b35',
-                    flexShrink: 0,
-                    opacity: isToday ? 1 : 0.4
+                    flexShrink: 0
                   }}
                 />
                 {editingTaskId === task.id ? (

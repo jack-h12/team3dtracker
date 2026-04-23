@@ -231,8 +231,23 @@ export async function updateTask(taskId: string, updates: Partial<Task>): Promis
   return data as Task
 }
 
-export async function completeTask(taskId: string, userId: string, currentTasks?: Task[]): Promise<Profile> {
-  // Get current profile to check daily completion counter
+// Counts how many of the user's tasks are currently marked done across
+// today + any future-dated rows. Past-dated rows are deleted by the daily
+// cron, so this is effectively "everything still reachable from the UI".
+async function countDoneTodayAndFuture(userId: string): Promise<number> {
+  const todayStr = getCurrentTaskDate()
+  const { count, error } = await supabase
+    .from('tasks')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('is_done', true)
+    .gte('task_date', todayStr)
+
+  if (error) throw error
+  return count || 0
+}
+
+export async function completeTask(taskId: string, userId: string, _currentTasks?: Task[]): Promise<Profile> {
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('*')
@@ -241,7 +256,6 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
 
   if (profileError) throw profileError
 
-  // Get the task to check if it's already completed
   const { data: task, error: taskError } = await supabase
     .from('tasks')
     .select('*')
@@ -250,50 +264,34 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
 
   if (taskError) throw taskError
 
-  // Type assertions
   const typedProfile = profile as Profile
   const typedTask = task as Task
 
-  // If task is already completed, don't award gold/exp again
   if (typedTask.is_done) {
-    return typedProfile // Task already completed, no reward
+    return typedProfile
   }
 
-  // Check if user has already completed 10 tasks today (daily cap)
-  const tasksCompletedToday = typedProfile.tasks_completed_today || 0
-  if (tasksCompletedToday >= 10) {
-    // Still mark the task as done, but don't award rewards
-    await updateTask(taskId, { is_done: true })
-    throw new Error('Daily task completion limit reached (10 tasks per day). Gold and EXP are capped.')
-  }
-
-  // Mark task as done
+  // Mark task as done regardless of cap — future-day tasks can be checked
+  // off ahead of time even when today's cap is already full.
   await updateTask(taskId, { is_done: true })
 
-  // Calculate new daily level (0-10 based on completed tasks)
-  // Use provided tasks array if available, otherwise fetch
-  let tasks: Task[]
-  if (currentTasks) {
-    // Update the task in the provided array
-    tasks = currentTasks.map(t => t.id === taskId ? { ...t, is_done: true } : t)
-  } else {
-    // Fallback: fetch tasks if not provided
-    tasks = await getTodayTasks(userId)
-  }
-  const completedCount = tasks.filter(t => t.is_done).length
-  const newDailyLevel = Math.min(completedCount, 10)
+  // Source of truth for the daily counter: number of done tasks across
+  // today + future, clamped to 10. EXP and level follow the counter, so
+  // checks beyond the cap don't contribute. Gold is awarded for every
+  // check so users still feel rewarded for getting ahead on tomorrow.
+  const doneCount = await countDoneTodayAndFuture(userId)
+  const newTasksCompletedToday = Math.min(10, doneCount)
+  const oldTasksCompletedToday = typedProfile.tasks_completed_today || 0
+  const counterDelta = newTasksCompletedToday - oldTasksCompletedToday
 
-  // Award gold for completing task (10 gold per task)
+  const newDailyLevel = newTasksCompletedToday
   const goldReward = 10
-  
-  // Increment the daily completion counter
-  const newTasksCompletedToday = tasksCompletedToday + 1
-  
-  // Update profile: daily level, lifetime exp, gold, and completion counter using database function (bypasses RLS)
+  const expReward = Math.max(0, counterDelta) * 10
+
   const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
     user_id_param: userId,
     gold_increase: goldReward,
-    exp_increase: 10, // Award 10 EXP per task completed
+    exp_increase: expReward,
     new_level: newDailyLevel,
     tasks_completed_today: newTasksCompletedToday
   })
@@ -301,45 +299,39 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
   let updatedProfile: Profile
 
   if (updateError) {
-    // Fallback to direct update if function doesn't exist
     console.warn('Database function not available, using direct update:', updateError)
     const { data: updatedData, error: directUpdateError } = await ((supabase
       .from('profiles') as any)
       .update({
         avatar_level: newDailyLevel,
-        lifetime_exp: typedProfile.lifetime_exp + 10, // Award 10 EXP per task completed
+        lifetime_exp: typedProfile.lifetime_exp + expReward,
         gold: typedProfile.gold + goldReward,
         tasks_completed_today: newTasksCompletedToday,
       })
       .eq('id', userId)
       .select()
       .single())
-    
+
     if (directUpdateError) throw directUpdateError
     updatedProfile = updatedData as Profile
   } else {
-    // Fetch updated profile after RPC call
     const { data: updatedData, error: fetchError } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single()
-    
+
     if (fetchError) throw fetchError
     updatedProfile = updatedData as Profile
   }
 
-  // Check if user completed all tasks (10 tasks total, all done)
-  if (tasks.length === 10 && completedCount === 10) {
-    // Record the timestamp when they completed all 10 tasks (for leaderboard ranking)
-    if (!updatedProfile.completed_all_tasks_at) {
-      await ((supabase
-        .from('profiles') as any)
-        .update({ completed_all_tasks_at: new Date().toISOString() })
-        .eq('id', userId))
-    }
+  // Leaderboard ranking timestamp: set when the counter first hits 10.
+  if (newTasksCompletedToday === 10 && !updatedProfile.completed_all_tasks_at) {
+    await ((supabase
+      .from('profiles') as any)
+      .update({ completed_all_tasks_at: new Date().toISOString() })
+      .eq('id', userId))
 
-    // Re-fetch profile after updating completed_all_tasks_at
     const { data: refreshedProfile } = await supabase
       .from('profiles')
       .select('*')
@@ -351,7 +343,7 @@ export async function completeTask(taskId: string, userId: string, currentTasks?
   return updatedProfile
 }
 
-export async function uncompleteTask(taskId: string, userId: string, currentTasks?: Task[]): Promise<Profile> {
+export async function uncompleteTask(taskId: string, userId: string, _currentTasks?: Task[]): Promise<Profile> {
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('*')
@@ -361,36 +353,47 @@ export async function uncompleteTask(taskId: string, userId: string, currentTask
   if (profileError) throw profileError
   const typedProfile = profile as Profile
 
-  // Mark task as not done
+  // Verify the task was actually done before refunding — the 10-gold refund
+  // below is symmetric with completeTask, so we must not refund when the
+  // toggle is a no-op (e.g. double-clicks racing each other).
+  const { data: task } = await supabase
+    .from('tasks')
+    .select('is_done')
+    .eq('id', taskId)
+    .single()
+  if (!(task as { is_done: boolean } | null)?.is_done) {
+    return typedProfile
+  }
+
   await updateTask(taskId, { is_done: false })
 
-  // Recalculate daily level
-  let tasks: Task[]
-  if (currentTasks) {
-    tasks = currentTasks.map(t => t.id === taskId ? { ...t, is_done: false } : t)
-  } else {
-    tasks = await getTodayTasks(userId)
-  }
-  const completedCount = tasks.filter(t => t.is_done).length
-  const newDailyLevel = Math.min(completedCount, 10)
+  // Recalc counter from done-count across today + future, clamped to 10.
+  // Gold refunds every uncheck (mirror of completeTask). EXP and level only
+  // refund when the counter actually drops — checks beyond the cap didn't
+  // grant EXP/level, so unchecking them shouldn't remove any.
+  const doneCount = await countDoneTodayAndFuture(userId)
+  const newTasksCompletedToday = Math.min(10, doneCount)
+  const oldTasksCompletedToday = typedProfile.tasks_completed_today || 0
+  const counterDelta = oldTasksCompletedToday - newTasksCompletedToday
 
-  // Clear completion timestamp since they no longer have all 10 done
-  if (typedProfile.completed_all_tasks_at) {
+  // Clear the "completed all 10" timestamp if they've dropped back below cap.
+  if (counterDelta > 0 && typedProfile.completed_all_tasks_at) {
     await ((supabase
       .from('profiles') as any)
       .update({ completed_all_tasks_at: null })
       .eq('id', userId))
   }
 
-  // Reverse rewards: subtract 10 gold and 10 EXP
-  const newGold = Math.max(0, typedProfile.gold - 10)
-  const newExp = Math.max(0, typedProfile.lifetime_exp - 10)
-  const newTasksCompletedToday = Math.max(0, (typedProfile.tasks_completed_today || 0) - 1)
+  const newDailyLevel = newTasksCompletedToday
+  const goldRefund = 10
+  const expRefund = Math.max(0, counterDelta) * 10
+  const newGold = Math.max(0, typedProfile.gold - goldRefund)
+  const newExp = Math.max(0, typedProfile.lifetime_exp - expRefund)
 
   const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
     user_id_param: userId,
-    gold_increase: -10,
-    exp_increase: -10,
+    gold_increase: -goldRefund,
+    exp_increase: -expRefund,
     new_level: newDailyLevel,
     tasks_completed_today: newTasksCompletedToday
   })

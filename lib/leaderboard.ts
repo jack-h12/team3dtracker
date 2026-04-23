@@ -13,7 +13,38 @@
  */
 
 import { supabase } from './supabase'
+import { addDays } from './tasks'
 import type { Profile, Task } from './supabase'
+
+export type WeeklyProfile = Profile & { weekly_exp: number }
+
+// Returns the YYYY-MM-DD date of the Sunday whose 5 PM EST reset marks the
+// start of the current week's Monday task day. Weekly EXP is the difference
+// between the user's current lifetime_exp and their lifetime_exp recorded in
+// the daily leaderboard snapshot on that Sunday.
+export function getWeekStartSnapshotDate(): string {
+  const now = new Date()
+  const easternHour = parseInt(
+    now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }),
+    10
+  )
+  const todayEastern = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+
+  // After 5 PM EST the current task day is tomorrow — matches getCurrentTaskDate.
+  const effectiveDate = easternHour >= 17 ? addDays(todayEastern, 1) : todayEastern
+
+  const [y, m, d] = effectiveDate.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  const dayOfWeek = dt.getUTCDay() // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+
+  // Days back to this week's Monday. Sunday (0) is the last day of the Mon-Sun
+  // week, so Monday was 6 days ago in that case.
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+  const mondayDate = addDays(effectiveDate, -daysToMonday)
+  // The snapshot we want is the one taken at the reset BEFORE Monday's task day,
+  // which is labeled with the previous Sunday's date.
+  return addDays(mondayDate, -1)
+}
 
 export async function getDailyLeaderboard(signal?: AbortSignal): Promise<Profile[]> {
   const query = supabase
@@ -80,6 +111,47 @@ export async function getLifetimeLeaderboard(signal?: AbortSignal): Promise<Prof
   })
   
   return sorted
+}
+
+export async function getWeeklyLeaderboard(signal?: AbortSignal): Promise<WeeklyProfile[]> {
+  const weekStartDate = getWeekStartSnapshotDate()
+
+  const profilesQuery = supabase
+    .from('profiles')
+    .select('*')
+    .limit(100)
+  if (signal) profilesQuery.abortSignal(signal)
+  const { data: profilesData, error: profilesError } = await profilesQuery
+  if (profilesError) throw profilesError
+
+  const snapshotsQuery = supabase
+    .from('daily_leaderboard_snapshots')
+    .select('user_id, lifetime_exp')
+    .eq('snapshot_date', weekStartDate)
+  if (signal) snapshotsQuery.abortSignal(signal)
+  const { data: snapshotsData, error: snapshotsError } = await snapshotsQuery
+  if (snapshotsError) throw snapshotsError
+
+  const baselineByUser = new Map<string, number>()
+  for (const row of (snapshotsData || []) as { user_id: string; lifetime_exp: number }[]) {
+    baselineByUser.set(row.user_id, row.lifetime_exp || 0)
+  }
+
+  const profiles = (profilesData || []) as Profile[]
+  const enriched: WeeklyProfile[] = profiles.map((p) => {
+    // No snapshot → user joined mid-week; treat baseline as 0 so all their
+    // current lifetime_exp counts toward this week.
+    const baseline = baselineByUser.get(p.id) ?? 0
+    const weekly_exp = Math.max(0, p.lifetime_exp - baseline)
+    return { ...p, weekly_exp }
+  })
+
+  enriched.sort((a, b) => {
+    if (b.weekly_exp !== a.weekly_exp) return b.weekly_exp - a.weekly_exp
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  })
+
+  return enriched
 }
 
 export async function getUserTasks(userId: string, signal?: AbortSignal): Promise<Task[]> {
