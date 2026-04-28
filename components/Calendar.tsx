@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { getAvailableDates, getTaskSnapshot, getLeaderboardSnapshot, getNoteSnapshot, getDatesWithNotes } from '@/lib/calendar'
+import { getAvailableDates, getTaskSnapshot, getLeaderboardSnapshot, getNoteSnapshot, getDatesWithNotes, getSundaySnapshotDates, getWeeklyLeaderboardForEndSunday, isSunday } from '@/lib/calendar'
+import type { WeeklyLeaderboardEntry } from '@/lib/calendar'
 import type { DailyTaskSnapshot, DailyLeaderboardSnapshot, DailyNote } from '@/lib/supabase'
 
 interface CalendarProps {
@@ -15,6 +16,8 @@ export default function Calendar({ userId }: CalendarProps) {
   })
   const [availableDates, setAvailableDates] = useState<Set<string>>(new Set())
   const [datesWithNotes, setDatesWithNotes] = useState<Set<string>>(new Set())
+  const [sundayDates, setSundayDates] = useState<Set<string>>(new Set())
+  const [weeklyLeaderboard, setWeeklyLeaderboard] = useState<WeeklyLeaderboardEntry[]>([])
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [tasks, setTasks] = useState<DailyTaskSnapshot[]>([])
   const [leaderboard, setLeaderboard] = useState<DailyLeaderboardSnapshot[]>([])
@@ -28,13 +31,15 @@ export default function Calendar({ userId }: CalendarProps) {
     const load = async () => {
       try {
         setLoading(true)
-        const [dates, noteDates] = await Promise.all([
+        const [dates, noteDates, sundays] = await Promise.all([
           getAvailableDates(userId),
           getDatesWithNotes(userId),
+          getSundaySnapshotDates(),
         ])
         if (!cancelled) {
           setAvailableDates(new Set(dates))
           setDatesWithNotes(new Set(noteDates))
+          setSundayDates(new Set(sundays))
         }
       } catch (err) {
         console.error('Error loading calendar dates:', err)
@@ -51,14 +56,17 @@ export default function Calendar({ userId }: CalendarProps) {
     setSelectedDate(date)
     setDetailLoading(true)
     try {
-      const [taskData, lbData, noteData] = await Promise.all([
+      const isSun = isSunday(date)
+      const [taskData, lbData, noteData, weeklyData] = await Promise.all([
         getTaskSnapshot(userId, date),
         getLeaderboardSnapshot(date),
         getNoteSnapshot(userId, date),
+        isSun ? getWeeklyLeaderboardForEndSunday(date) : Promise.resolve([] as WeeklyLeaderboardEntry[]),
       ])
       setTasks(taskData)
       setLeaderboard(lbData)
       setNote(noteData)
+      setWeeklyLeaderboard(weeklyData)
     } catch (err) {
       console.error('Error loading day details:', err)
     } finally {
@@ -172,15 +180,22 @@ export default function Calendar({ userId }: CalendarProps) {
               const dateStr = formatDate(day)
               const hasData = availableDates.has(dateStr)
               const hasNote = datesWithNotes.has(dateStr)
+              const hasWeekly = sundayDates.has(dateStr)
+              const isClickable = hasData || hasWeekly
               const isSelected = selectedDate === dateStr
               const isToday = dateStr === todayStr
               const isFuture = dateStr > todayStr
+              const isSun = isSunday(dateStr)
+
+              const sundayBg = 'linear-gradient(135deg, rgba(124, 111, 255, 0.18) 0%, rgba(80, 60, 200, 0.10) 100%)'
+              const sundayBorder = '1px solid rgba(124, 111, 255, 0.45)'
+              const defaultBorder = isToday ? '2px solid #555' : '1px solid #2a2a2a'
 
               return (
                 <button
                   key={day}
-                  onClick={() => hasData ? selectDate(dateStr) : null}
-                  disabled={!hasData}
+                  onClick={() => isClickable ? selectDate(dateStr) : null}
+                  disabled={!isClickable}
                   style={{
                     aspectRatio: '1',
                     display: 'flex',
@@ -190,16 +205,18 @@ export default function Calendar({ userId }: CalendarProps) {
                     borderRadius: '10px',
                     border: isSelected
                       ? '2px solid #ff6b35'
-                      : isToday
-                        ? '2px solid #555'
-                        : '1px solid #2a2a2a',
+                      : isSun && hasWeekly
+                        ? sundayBorder
+                        : defaultBorder,
                     background: isSelected
                       ? 'linear-gradient(135deg, rgba(255, 107, 53, 0.2) 0%, rgba(255, 69, 0, 0.1) 100%)'
-                      : hasData
-                        ? '#1a1a1a'
-                        : 'transparent',
-                    color: isFuture ? '#333' : hasData ? '#fff' : '#555',
-                    cursor: hasData ? 'pointer' : 'default',
+                      : isSun && hasWeekly
+                        ? sundayBg
+                        : hasData
+                          ? '#1a1a1a'
+                          : 'transparent',
+                    color: isFuture ? '#333' : isClickable ? '#fff' : '#555',
+                    cursor: isClickable ? 'pointer' : 'default',
                     fontSize: '14px',
                     fontWeight: isSelected ? 700 : 500,
                     transition: 'all 0.2s ease',
@@ -207,15 +224,20 @@ export default function Calendar({ userId }: CalendarProps) {
                     padding: '4px'
                   }}
                   onMouseEnter={(e) => {
-                    if (hasData && !isSelected) {
+                    if (isClickable && !isSelected) {
                       e.currentTarget.style.borderColor = '#ff6b35'
                       e.currentTarget.style.background = 'rgba(255, 107, 53, 0.08)'
                     }
                   }}
                   onMouseLeave={(e) => {
-                    if (hasData && !isSelected) {
-                      e.currentTarget.style.borderColor = '#2a2a2a'
-                      e.currentTarget.style.background = '#1a1a1a'
+                    if (isClickable && !isSelected) {
+                      if (isSun && hasWeekly) {
+                        e.currentTarget.style.borderColor = 'rgba(124, 111, 255, 0.45)'
+                        e.currentTarget.style.background = sundayBg
+                      } else {
+                        e.currentTarget.style.borderColor = '#2a2a2a'
+                        e.currentTarget.style.background = hasData ? '#1a1a1a' : 'transparent'
+                      }
                     }
                   }}
                 >
@@ -416,6 +438,115 @@ export default function Calendar({ userId }: CalendarProps) {
                       }}>
                         {note.content}
                       </p>
+                    </div>
+                  )}
+
+                  {/* Weekly Leaderboard Section — shown only for Sundays */}
+                  {isSunday(selectedDate) && (
+                    <div style={{
+                      background: '#0a0a0a',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(124, 111, 255, 0.35)',
+                      padding: '20px',
+                    }}>
+                      <h4 style={{
+                        fontSize: '16px',
+                        fontWeight: 700,
+                        color: '#fff',
+                        margin: '0 0 6px 0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span style={{ fontSize: '18px' }}>👑</span>
+                        Weekly Leaderboard
+                      </h4>
+                      <p style={{ color: '#888', fontSize: '12px', margin: '0 0 16px 0' }}>
+                        {(() => {
+                          const [y, mo, d] = selectedDate.split('-').map(Number)
+                          const end = new Date(Date.UTC(y, mo - 1, d))
+                          const start = new Date(end)
+                          start.setUTCDate(start.getUTCDate() - 6)
+                          const fmt = (dt: Date) => dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+                          return `Week of ${fmt(start)} – ${fmt(end)}`
+                        })()}
+                      </p>
+
+                      {weeklyLeaderboard.length === 0 ? (
+                        <p style={{ color: '#666', fontSize: '14px', margin: 0, fontStyle: 'italic' }}>
+                          No weekly data for this week.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {weeklyLeaderboard.slice(0, 10).map((entry) => {
+                            const medal = entry.rank === 1 ? '&#129351;' : entry.rank === 2 ? '&#129352;' : entry.rank === 3 ? '&#129353;' : null
+                            const isCurrentUser = entry.user_id === userId
+                            return (
+                              <div
+                                key={entry.user_id}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '12px',
+                                  padding: '10px 14px',
+                                  background: isCurrentUser ? 'rgba(255, 107, 53, 0.08)' : 'transparent',
+                                  borderRadius: '8px',
+                                  border: isCurrentUser ? '1px solid rgba(255, 107, 53, 0.2)' : '1px solid transparent',
+                                }}
+                              >
+                                <div style={{
+                                  width: '32px',
+                                  textAlign: 'center',
+                                  fontSize: medal ? '18px' : '14px',
+                                  fontWeight: 700,
+                                  color: medal ? undefined : '#888',
+                                  flexShrink: 0
+                                }}>
+                                  {medal ? (
+                                    <span dangerouslySetInnerHTML={{ __html: medal }} />
+                                  ) : (
+                                    `#${entry.rank}`
+                                  )}
+                                </div>
+                                <div style={{
+                                  flex: 1,
+                                  minWidth: 0,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  <span style={{
+                                    color: isCurrentUser ? '#ff6b35' : '#fff',
+                                    fontSize: '14px',
+                                    fontWeight: isCurrentUser ? 700 : 500
+                                  }}>
+                                    {entry.display_name || entry.username}
+                                  </span>
+                                </div>
+                                <div style={{
+                                  fontSize: '13px',
+                                  fontWeight: 600,
+                                  color: '#ffd700',
+                                  flexShrink: 0
+                                }}>
+                                  +{entry.weekly_exp.toLocaleString()} EXP
+                                </div>
+                                <div style={{
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  color: '#ffd700',
+                                  padding: '2px 8px',
+                                  background: 'rgba(255, 215, 0, 0.1)',
+                                  borderRadius: '6px',
+                                  flexShrink: 0
+                                }}>
+                                  Lv.{entry.avatar_level}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
 
