@@ -72,7 +72,14 @@ export default function Lifts({ userId }: LiftsProps) {
   }, [selectedId, loadSubmissions])
 
   const selected = boards.find((b) => b.id === selectedId) || null
-  const userSubmission = submissions.find((s) => s.user_id === userId) || null
+  const userSubmissions = submissions.filter((s) => s.user_id === userId)
+  const lastUserSubmissionAt = userSubmissions.length > 0
+    ? userSubmissions.reduce((max, s) => (s.created_at > max ? s.created_at : max), userSubmissions[0].created_at)
+    : null
+  const cooldownUntil = lastUserSubmissionAt
+    ? new Date(new Date(lastUserSubmissionAt).getTime() + 24 * 60 * 60 * 1000).toISOString()
+    : null
+  const onCooldown = !!cooldownUntil && new Date(cooldownUntil).getTime() > Date.now()
 
   const handleAdminDelete = async (submissionId: string) => {
     const ok = await showConfirm('Remove submission', 'Remove this submission? The video and entry will be deleted.')
@@ -109,7 +116,8 @@ export default function Lifts({ userId }: LiftsProps) {
         leaderboard={selected}
         submissions={submissions}
         submissionsLoading={submissionsLoading}
-        userSubmission={userSubmission}
+        cooldownUntil={cooldownUntil}
+        onCooldown={onCooldown}
         onBack={() => setSelectedId(null)}
         onSubmit={() => setShowSubmit(true)}
         onAdminDelete={handleAdminDelete}
@@ -281,7 +289,7 @@ function Section({
 }
 
 function LeaderboardDetail({
-  userId, userIsAdmin, leaderboard, submissions, submissionsLoading, userSubmission,
+  userId, userIsAdmin, leaderboard, submissions, submissionsLoading, cooldownUntil, onCooldown,
   onBack, onSubmit, onAdminDelete, onDeleteLeaderboard, showSubmit, onCloseSubmit, onSubmitDone,
 }: {
   userId: string
@@ -289,7 +297,8 @@ function LeaderboardDetail({
   leaderboard: LiftLeaderboardWithCreator
   submissions: LiftSubmissionWithUser[]
   submissionsLoading: boolean
-  userSubmission: LiftSubmissionWithUser | null
+  cooldownUntil: string | null
+  onCooldown: boolean
   onBack: () => void
   onSubmit: () => void
   onAdminDelete: (id: string) => void
@@ -373,20 +382,37 @@ function LeaderboardDetail({
           {isActive && (
             <button
               onClick={onSubmit}
+              disabled={onCooldown}
               style={{
                 padding: '10px 18px',
-                background: 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)',
+                background: onCooldown
+                  ? 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
+                  : 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)',
                 color: '#fff',
                 border: 'none',
                 borderRadius: '10px',
-                cursor: 'pointer',
+                cursor: onCooldown ? 'not-allowed' : 'pointer',
                 fontWeight: 700,
                 fontSize: '14px',
-                boxShadow: '0 4px 15px rgba(255, 107, 53, 0.4)',
+                boxShadow: onCooldown ? 'none' : '0 4px 15px rgba(255, 107, 53, 0.4)',
               }}
             >
-              {userSubmission ? 'Update My Entry' : '+ Submit My Lift'}
+              + Submit My Lift
             </button>
+          )}
+          {isActive && onCooldown && cooldownUntil && (
+            <div style={{
+              padding: '10px 14px',
+              background: 'rgba(255, 107, 53, 0.08)',
+              border: '1px solid rgba(255, 107, 53, 0.2)',
+              borderRadius: '10px',
+              color: '#ff9469',
+              fontSize: '13px',
+              fontWeight: 500,
+              alignSelf: 'center',
+            }}>
+              Next entry in {formatTimeRemaining(cooldownUntil)}
+            </div>
           )}
           {canDelete && (
             <button
@@ -499,7 +525,6 @@ function LeaderboardDetail({
           userId={userId}
           leaderboardId={leaderboard.id}
           unit={leaderboard.unit}
-          existing={userSubmission}
           onClose={onCloseSubmit}
           onDone={onSubmitDone}
         />
@@ -572,18 +597,17 @@ function CreateModal({ userId, onClose, onCreated }: { userId: string; onClose: 
 }
 
 function SubmitModal({
-  userId, leaderboardId, unit, existing, onClose, onDone,
+  userId, leaderboardId, unit, onClose, onDone,
 }: {
   userId: string
   leaderboardId: string
   unit: string
-  existing: LiftSubmissionWithUser | null
   onClose: () => void
   onDone: () => void
 }) {
-  const [value, setValue] = useState(existing?.value?.toString() || '')
-  const [reps, setReps] = useState(existing?.reps?.toString() || '')
-  const [notes, setNotes] = useState(existing?.notes || '')
+  const [value, setValue] = useState('')
+  const [reps, setReps] = useState('')
+  const [notes, setNotes] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
@@ -592,14 +616,11 @@ function SubmitModal({
     setError('')
     const num = parseFloat(value)
     if (!Number.isFinite(num)) { setError('Enter a valid number'); return }
-    if (!file && !existing) { setError('Upload a proof video'); return }
+    if (!file) { setError('Upload a proof video'); return }
 
     try {
-      let videoUrl = existing?.video_url || ''
-      if (file) {
-        setProgress('Uploading video...')
-        videoUrl = await uploadProofVideo(userId, file)
-      }
+      setProgress('Uploading video...')
+      const videoUrl = await uploadProofVideo(userId, file)
       setProgress('Saving entry...')
       const repsNum = reps.trim() ? parseInt(reps, 10) : null
       await submitEntry({
@@ -620,8 +641,8 @@ function SubmitModal({
 
   return (
     <Overlay onClose={onClose}>
-      <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', margin: '0 0 6px 0' }}>{existing ? 'Update Entry' : 'Submit Entry'}</h3>
-      <p style={{ color: '#888', fontSize: '13px', margin: '0 0 18px 0' }}>Upload a video proof of your lift.</p>
+      <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', margin: '0 0 6px 0' }}>Submit Entry</h3>
+      <p style={{ color: '#888', fontSize: '13px', margin: '0 0 18px 0' }}>Upload a video proof of your lift. You can submit a new entry every 24 hours.</p>
 
       <Field label={`Value (${unit})`}>
         <input
@@ -644,7 +665,7 @@ function SubmitModal({
         />
       </Field>
 
-      <Field label={existing ? 'Replace video (optional)' : 'Proof video'}>
+      <Field label="Proof video">
         <input
           type="file"
           accept="video/*"
@@ -669,7 +690,7 @@ function SubmitModal({
 
       <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
         <button onClick={onClose} disabled={!!progress} style={btnSecondary}>Cancel</button>
-        <button onClick={handle} disabled={!!progress} style={btnPrimary}>{progress ? '...' : (existing ? 'Update' : 'Submit')}</button>
+        <button onClick={handle} disabled={!!progress} style={btnPrimary}>{progress ? '...' : 'Submit'}</button>
       </div>
     </Overlay>
   )

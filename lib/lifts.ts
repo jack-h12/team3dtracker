@@ -2,7 +2,8 @@
  * Lift Leaderboards
  *
  * User-created weekly lift competitions. One creation per user per 7 days.
- * Submissions include a value (e.g. weight) and a video proof.
+ * Submissions include a value (e.g. weight) and a video proof. Users may submit
+ * multiple entries to the same leaderboard, but at most one per 24 hours.
  * Top submitter at end-of-week gets 250 XP + 500 gold (handled DB-side).
  */
 
@@ -252,7 +253,7 @@ export async function submitEntry(input: {
   }
   const { data, error } = await ((supabase
     .from('lift_submissions') as any)
-    .upsert(payload, { onConflict: 'leaderboard_id,user_id' })
+    .insert(payload)
     .select('*')
     .single())
 
