@@ -168,24 +168,94 @@ export async function addTask(
   return data
 }
 
-// Copies all tasks from (date - 1) into `date` as fresh, uncompleted tasks.
-// Skips tasks that would overflow the 10-per-day cap. Returns inserted tasks.
-export async function copyTasksFromPreviousDay(userId: string, date: string): Promise<Task[]> {
-  const prevDate = addDays(date, -1)
-  const [existing, liveSource] = await Promise.all([
-    getTasksForDate(userId, date),
-    getTasksForDate(userId, prevDate),
+// Returns a list of distinct dates (excluding `excludeDate`) for which the
+// user has tasks available to copy — either live in `tasks` (e.g. future days
+// they pre-planned) or archived in `daily_task_snapshots` (past days). Ordered
+// newest first.
+export async function getAvailableSourceDates(
+  userId: string,
+  excludeDate: string,
+  limit: number = 30
+): Promise<{ date: string; count: number }[]> {
+  const [{ data: liveRows, error: liveError }, { data: snapRows, error: snapError }] = await Promise.all([
+    supabase
+      .from('tasks')
+      .select('task_date')
+      .eq('user_id', userId),
+    supabase
+      .from('daily_task_snapshots')
+      .select('snapshot_date')
+      .eq('user_id', userId)
+      .order('snapshot_date', { ascending: false })
+      .limit(limit * 10), // overfetch — many rows per date
   ])
 
-  // After the 5pm EST reset the prior day's tasks are deleted from `tasks`.
-  // The cron writes them to `daily_task_snapshots` first, so fall back there.
+  if (liveError) throw liveError
+  if (snapError) throw snapError
+
+  const liveCounts = new Map<string, number>()
+  for (const r of (liveRows || []) as { task_date: string }[]) {
+    if (r.task_date === excludeDate) continue
+    liveCounts.set(r.task_date, (liveCounts.get(r.task_date) || 0) + 1)
+  }
+  const snapCounts = new Map<string, number>()
+  for (const r of (snapRows || []) as { snapshot_date: string }[]) {
+    if (r.snapshot_date === excludeDate) continue
+    snapCounts.set(r.snapshot_date, (snapCounts.get(r.snapshot_date) || 0) + 1)
+  }
+  // Live takes precedence if a date appears in both (shouldn't happen).
+  const counts = new Map<string, number>()
+  snapCounts.forEach((c, d) => counts.set(d, c))
+  liveCounts.forEach((c, d) => counts.set(d, c))
+
+  return Array.from(counts.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .slice(0, limit)
+}
+
+// Returns the task descriptions for `date`, looking at live `tasks` first
+// then falling back to `daily_task_snapshots`. Used by the copy-from-day
+// picker to preview a day's contents on hover.
+export async function getTaskPreviewForDate(userId: string, date: string): Promise<string[]> {
+  const live = await getTasksForDate(userId, date)
+  if (live.length > 0) return live.map((t) => t.description)
+
+  const { data: snapshot, error } = await supabase
+    .from('daily_task_snapshots')
+    .select('description, task_order')
+    .eq('user_id', userId)
+    .eq('snapshot_date', date)
+    .order('task_order', { ascending: true })
+
+  if (error) throw error
+  return ((snapshot || []) as { description: string }[]).map((t) => t.description)
+}
+
+// Copies all tasks from `sourceDate` into `targetDate` as fresh, uncompleted
+// tasks. Skips tasks that would overflow the 10-per-day cap. Returns inserted
+// tasks. Looks at both live `tasks` and the `daily_task_snapshots` archive.
+export async function copyTasksFromDate(
+  userId: string,
+  sourceDate: string,
+  targetDate: string
+): Promise<Task[]> {
+  if (sourceDate === targetDate) {
+    throw new Error('Source and target days must differ')
+  }
+
+  const [existing, liveSource] = await Promise.all([
+    getTasksForDate(userId, targetDate),
+    getTasksForDate(userId, sourceDate),
+  ])
+
   let source: { description: string; reward: string | null; task_order: number }[] = liveSource
   if (source.length === 0) {
     const { data: snapshot, error: snapshotError } = await supabase
       .from('daily_task_snapshots')
       .select('description, reward, task_order')
       .eq('user_id', userId)
-      .eq('snapshot_date', prevDate)
+      .eq('snapshot_date', sourceDate)
       .order('task_order', { ascending: true })
 
     if (snapshotError) throw snapshotError
@@ -193,7 +263,7 @@ export async function copyTasksFromPreviousDay(userId: string, date: string): Pr
   }
 
   if (source.length === 0) {
-    throw new Error('No tasks found for the previous day')
+    throw new Error('No tasks found for that day')
   }
 
   const slotsAvailable = 10 - existing.length
@@ -207,7 +277,7 @@ export async function copyTasksFromPreviousDay(userId: string, date: string): Pr
     reward: t.reward,
     is_done: false,
     task_order: existing.length + i,
-    task_date: date,
+    task_date: targetDate,
   }))
 
   const { data, error } = await ((supabase

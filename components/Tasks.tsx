@@ -17,7 +17,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getTodayTasks, getTasksForDate, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, shouldResetAvatar, updateTaskOrder, getCurrentTaskDate, addDays, copyTasksFromPreviousDay } from '@/lib/tasks'
+import { getTodayTasks, getTasksForDate, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, shouldResetAvatar, updateTaskOrder, getCurrentTaskDate, addDays, copyTasksFromDate, getAvailableSourceDates, getTaskPreviewForDate } from '@/lib/tasks'
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { supabase } from '@/lib/supabase'
@@ -398,10 +398,46 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     }
   }
 
-  const handleCopyFromPreviousDay = async () => {
+  const [showCopyPicker, setShowCopyPicker] = useState(false)
+  const [copySources, setCopySources] = useState<{ date: string; count: number }[]>([])
+  const [copySourcesLoading, setCopySourcesLoading] = useState(false)
+  const [hoveredCopyDate, setHoveredCopyDate] = useState<string | null>(null)
+  const [copyPreviews, setCopyPreviews] = useState<Record<string, string[]>>({})
+  const previewLoadingRef = useRef<Set<string>>(new Set())
+
+  const handleCopyHover = async (date: string) => {
+    setHoveredCopyDate(date)
+    if (copyPreviews[date] || previewLoadingRef.current.has(date)) return
+    previewLoadingRef.current.add(date)
+    try {
+      const lines = await getTaskPreviewForDate(userId, date)
+      setCopyPreviews((prev) => ({ ...prev, [date]: lines }))
+    } catch {
+      // ignore — hover preview is best-effort
+    } finally {
+      previewLoadingRef.current.delete(date)
+    }
+  }
+
+  const openCopyPicker = async () => {
+    setShowCopyPicker(true)
+    setCopySourcesLoading(true)
+    try {
+      const dates = await getAvailableSourceDates(userId, selectedDate)
+      setCopySources(dates)
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to load days', 'error')
+      setShowCopyPicker(false)
+    } finally {
+      setCopySourcesLoading(false)
+    }
+  }
+
+  const handleCopyFromDate = async (sourceDate: string) => {
+    setShowCopyPicker(false)
     setLoading(true)
     try {
-      const inserted = await copyTasksFromPreviousDay(userId, selectedDate)
+      const inserted = await copyTasksFromDate(userId, sourceDate, selectedDate)
       setTasks([...tasks, ...inserted])
     } catch (err: any) {
       await showModal('Error', err.message || 'Failed to copy tasks', 'error')
@@ -707,9 +743,9 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
           </button>
         </div>
 
-        {/* Copy-from-previous-day button */}
+        {/* Copy-from-another-day button */}
         <button
-          onClick={handleCopyFromPreviousDay}
+          onClick={openCopyPicker}
           disabled={loading || tasks.length >= 10}
           style={{
             marginTop: '10px',
@@ -727,8 +763,136 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
             transition: 'all 0.2s ease'
           }}
         >
-          📋 COPY TASKS FROM PREVIOUS DAY
+          📋 COPY TASKS FROM ANOTHER DAY
         </button>
+
+        {showCopyPicker && (
+          <div
+            onClick={() => setShowCopyPicker(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0, 0, 0, 0.7)',
+              zIndex: 1000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px'
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: '#0a0a0a',
+                border: '1px solid rgba(255, 215, 0, 0.4)',
+                borderRadius: '14px',
+                padding: '20px',
+                width: '100%',
+                maxWidth: '400px',
+                maxHeight: '70vh',
+                overflowY: 'auto'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <div style={{ color: '#ffd700', fontWeight: 700, fontSize: '15px' }}>Pick a day to copy from</div>
+                <button
+                  onClick={() => setShowCopyPicker(false)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#888',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    lineHeight: 1
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              {copySourcesLoading ? (
+                <div style={{ color: '#888', padding: '20px', textAlign: 'center' }}>Loading…</div>
+              ) : copySources.length === 0 ? (
+                <div style={{ color: '#888', padding: '20px', textAlign: 'center' }}>
+                  No other days with tasks found.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {copySources.map(({ date, count }) => {
+                    const d = new Date(date + 'T00:00:00')
+                    const label = d.toLocaleDateString(undefined, {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric'
+                    })
+                    const isHovered = hoveredCopyDate === date
+                    const preview = copyPreviews[date]
+                    return (
+                      <div
+                        key={date}
+                        onMouseEnter={() => handleCopyHover(date)}
+                        onMouseLeave={() => setHoveredCopyDate((d) => (d === date ? null : d))}
+                        style={{
+                          background: '#1a1a1a',
+                          border: '1px solid ' + (isHovered ? 'rgba(255, 215, 0, 0.5)' : '#2a2a2a'),
+                          borderRadius: '10px',
+                          overflow: 'hidden',
+                          transition: 'border-color 0.15s ease'
+                        }}
+                      >
+                        <button
+                          onClick={() => handleCopyFromDate(date)}
+                          onFocus={() => handleCopyHover(date)}
+                          style={{
+                            width: '100%',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '12px 14px',
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#fff',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            textAlign: 'left'
+                          }}
+                        >
+                          <span>{label}</span>
+                          <span style={{ color: '#ffd700', fontSize: '12px' }}>
+                            {count} task{count === 1 ? '' : 's'}
+                          </span>
+                        </button>
+                        {isHovered && (
+                          <div
+                            style={{
+                              padding: '0 14px 12px 14px',
+                              borderTop: '1px solid #2a2a2a',
+                              color: '#bbb',
+                              fontSize: '12px',
+                              lineHeight: 1.5
+                            }}
+                          >
+                            {!preview ? (
+                              <div style={{ paddingTop: '10px', color: '#666' }}>Loading…</div>
+                            ) : preview.length === 0 ? (
+                              <div style={{ paddingTop: '10px', color: '#666' }}>No tasks.</div>
+                            ) : (
+                              <ol style={{ margin: '10px 0 0', paddingLeft: '20px' }}>
+                                {preview.map((d, i) => (
+                                  <li key={i} style={{ marginBottom: '2px' }}>{d}</li>
+                                ))}
+                              </ol>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Add Task Form */}
