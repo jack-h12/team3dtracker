@@ -16,6 +16,7 @@ import {
 import type { LiftLeaderboardWithCreator, LiftSubmissionWithUser } from '@/lib/lifts'
 import { isAdmin } from '@/lib/admin'
 import { showModal, showConfirm } from '@/lib/modal'
+import CoreLifts from './CoreLifts'
 
 interface LiftsProps {
   userId: string
@@ -33,6 +34,7 @@ export default function Lifts({ userId }: LiftsProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [createBlocked, setCreateBlocked] = useState<{ blocked: boolean; nextAllowedAt: string | null }>({ blocked: false, nextAllowedAt: null })
   const [showSubmit, setShowSubmit] = useState(false)
+  const [coreDetailOpen, setCoreDetailOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -146,6 +148,12 @@ export default function Lifts({ userId }: LiftsProps) {
         WebkitTextFillColor: 'transparent',
         letterSpacing: '-0.5px'
       }}>LIFT LEADERBOARDS</h2>
+
+      {!coreDetailOpen && (
+      <>
+      <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#fff', margin: '0 0 6px 0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        Weekly Competitions
+      </h3>
       <p style={{ color: '#888', fontSize: '14px', marginBottom: '20px', fontWeight: 500 }}>
         Create a weekly lift competition or join one. Winner gets <span style={{ color: '#ffd700', fontWeight: 700 }}>+250 EXP</span> and <span style={{ color: '#ffd700', fontWeight: 700 }}>+500 gold</span>.
       </p>
@@ -187,6 +195,12 @@ export default function Lifts({ userId }: LiftsProps) {
 
       <Section title="Active" emptyText="No active competitions. Create one!" boards={active} onSelect={setSelectedId} userId={userId} />
       <Section title="Completed" emptyText="No completed competitions yet." boards={completed} onSelect={setSelectedId} userId={userId} />
+
+      <div style={{ height: '32px' }} />
+      </>
+      )}
+
+      <CoreLifts userId={userId} onDetailOpenChange={setCoreDetailOpen} />
 
       {showCreate && (
         <CreateModal
