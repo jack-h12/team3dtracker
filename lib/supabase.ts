@@ -191,6 +191,14 @@ function createSupabaseClient(): SupabaseClient {
 
 export let supabase = createSupabaseClient()
 
+// On cold open, supabase-js leaves auto-refresh to a hidden→visible
+// visibilitychange event that never fires (the tab was never hidden).
+// Kick it off explicitly so the persisted token gets refreshed instead
+// of every query queueing behind a refresh that never happens.
+if (typeof window !== 'undefined') {
+  supabase.auth.startAutoRefresh()
+}
+
 // ── Tab-visibility session recovery ──────────────────────────────────
 // When the browser tab is hidden and later revealed, the Supabase auth
 // state can go stale. This listener tells Supabase to re-validate the
