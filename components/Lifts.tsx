@@ -193,6 +193,23 @@ export default function Lifts({ userId }: LiftsProps) {
         )}
       </div>
 
+      <div style={{
+        padding: '12px 14px',
+        marginBottom: '20px',
+        background: 'rgba(255, 215, 0, 0.06)',
+        border: '1px solid rgba(255, 215, 0, 0.25)',
+        borderRadius: '10px',
+      }}>
+        <div style={{ color: '#ffd700', fontSize: '12px', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '6px' }}>
+          END-OF-WEEK REWARDS
+        </div>
+        <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '13px', color: '#ddd' }}>
+          <span><span style={{ fontSize: '15px' }}>🥇</span> 250 XP + 500 gold</span>
+          <span><span style={{ fontSize: '15px' }}>🥈</span> 150 XP + 300 gold</span>
+          <span><span style={{ fontSize: '15px' }}>🥉</span> 75 XP + 150 gold</span>
+        </div>
+      </div>
+
       <Section title="Active" emptyText="No active competitions. Create one!" boards={active} onSelect={setSelectedId} userId={userId} />
       <Section title="Completed" emptyText="No completed competitions yet." boards={completed} onSelect={setSelectedId} userId={userId} />
 
@@ -445,6 +462,23 @@ function LeaderboardDetail({
               Delete leaderboard
             </button>
           )}
+        </div>
+
+        <div style={{
+          marginTop: '16px',
+          padding: '12px 14px',
+          background: 'rgba(255, 215, 0, 0.06)',
+          border: '1px solid rgba(255, 215, 0, 0.25)',
+          borderRadius: '10px',
+        }}>
+          <div style={{ color: '#ffd700', fontSize: '12px', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '6px' }}>
+            END-OF-WEEK REWARDS
+          </div>
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '13px', color: '#ddd' }}>
+            <span><span style={{ fontSize: '15px' }}>🥇</span> 250 XP + 500 gold</span>
+            <span><span style={{ fontSize: '15px' }}>🥈</span> 150 XP + 300 gold</span>
+            <span><span style={{ fontSize: '15px' }}>🥉</span> 75 XP + 150 gold</span>
+          </div>
         </div>
       </div>
 

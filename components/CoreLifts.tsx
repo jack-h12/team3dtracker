@@ -4,14 +4,18 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   listCoreLifts,
   getCoreLiftSubmissions,
+  getCoreLiftSummaries,
+  getCompositeScoreLeaderboard,
+  getUserCoreLiftStats,
   submitCoreLiftEntry,
   deleteCoreLiftSubmission,
   dotsForSubmission,
   EXERCISE_LABEL,
   EXERCISE_EMOJI,
+  EXERCISE_IMAGE,
   EXERCISE_ORDER,
 } from '@/lib/coreLifts'
-import type { CoreLift, CoreLiftSubmissionWithUser, Exercise } from '@/lib/coreLifts'
+import type { CoreLift, CoreLiftSubmissionWithUser, CoreLiftSummary, CompositeScoreRow, Exercise, UserCoreLiftEntry } from '@/lib/coreLifts'
 import {
   getProfile,
   upsertProfile,
@@ -23,8 +27,12 @@ import {
   inchesToCm,
   formatHeight,
   formatWeight,
+  listLifters,
+  computeAge,
+  computeMaxHR,
+  computeVO2Max,
 } from '@/lib/liftProfile'
-import type { LiftProfile, UnitPref } from '@/lib/liftProfile'
+import type { LiftProfile, LifterListing, UnitPref } from '@/lib/liftProfile'
 import { uploadProofVideo } from '@/lib/lifts'
 import { isAdmin } from '@/lib/admin'
 import { showModal, showConfirm } from '@/lib/modal'
@@ -38,20 +46,30 @@ type RankMode = 'absolute' | 'relative'
 
 export default function CoreLifts({ userId, onDetailOpenChange }: CoreLiftsProps) {
   const [lifts, setLifts] = useState<CoreLift[]>([])
+  const [summaries, setSummaries] = useState<Record<string, CoreLiftSummary>>({})
+  const [lifters, setLifters] = useState<LifterListing[]>([])
+  const [composite, setComposite] = useState<CompositeScoreRow[]>([])
   const [profile, setProfile] = useState<LiftProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [userIsAdmin, setUserIsAdmin] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [selectedLiftId, setSelectedLiftId] = useState<string | null>(null)
+  const [viewLifterId, setViewLifterId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const [ls, p, admin] = await Promise.all([
+      const [ls, sum, lf, comp, p, admin] = await Promise.all([
         listCoreLifts(),
+        getCoreLiftSummaries(),
+        listLifters(),
+        getCompositeScoreLeaderboard(),
         getProfile(userId),
         isAdmin(userId),
       ])
       setLifts(ls)
+      setSummaries(sum)
+      setLifters(lf)
+      setComposite(comp)
       setProfile(p)
       setUserIsAdmin(admin)
     } catch (err) {
@@ -100,10 +118,13 @@ export default function CoreLifts({ userId, onDetailOpenChange }: CoreLiftsProps
         onEdit={() => setShowProfile(true)}
       />
 
+      <CompositeScoreCard rows={composite} currentUserId={userId} />
+
       <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#fff', margin: '24px 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
         Core Lifts
       </h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <div className="core-lifts-layout">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: 0 }}>
         {EXERCISE_ORDER.map((ex) => {
           const variants = liftsByExercise.get(ex) || []
           if (variants.length === 0) return null
@@ -112,39 +133,104 @@ export default function CoreLifts({ userId, onDetailOpenChange }: CoreLiftsProps
               background: '#0a0a0a',
               border: '1px solid #3a3a3a',
               borderRadius: '12px',
-              padding: '14px 16px',
+              overflow: 'hidden',
             }}>
-              <div style={{ fontSize: '15px', fontWeight: 800, color: '#fff', marginBottom: '10px' }}>
-                <span style={{ marginRight: '8px' }}>{EXERCISE_EMOJI[ex]}</span>
-                {EXERCISE_LABEL[ex]}
+              <div style={{
+                position: 'relative',
+                width: '100%',
+                height: '180px',
+                background: '#000',
+              }}>
+                <img
+                  src={EXERCISE_IMAGE[ex]}
+                  alt={EXERCISE_LABEL[ex]}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                />
+                <div style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'linear-gradient(180deg, rgba(0,0,0,0) 60%, rgba(0,0,0,0.9) 100%)',
+                  pointerEvents: 'none',
+                }} />
+                <div style={{
+                  position: 'absolute',
+                  left: '16px',
+                  bottom: '12px',
+                  fontSize: '20px',
+                  fontWeight: 800,
+                  color: '#fff',
+                  textShadow: '0 2px 8px rgba(0,0,0,0.9)',
+                }}>
+                  <span style={{ marginRight: '8px' }}>{EXERCISE_EMOJI[ex]}</span>
+                  {EXERCISE_LABEL[ex]}
+                </div>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {variants.map((v) => (
-                  <button
-                    key={v.id}
-                    onClick={() => setSelectedLiftId(v.id)}
-                    style={{
-                      padding: '8px 14px',
-                      background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
-                      border: '1px solid #3a3a3a',
-                      borderRadius: '10px',
-                      color: '#fff',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                      transition: 'all 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#ff6b35' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#3a3a3a' }}
-                  >
-                    {v.display_name}
-                  </button>
-                ))}
+              <div style={{ padding: '14px 16px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {variants.map((v) => {
+                  const s = summaries[v.id]
+                  const count = s?.count || 0
+                  const winnerName = s?.topDisplayName || s?.topUsername || null
+                  const winnerValue = s?.topValue ?? null
+                  const winnerText = winnerValue !== null
+                    ? (v.unit === 'reps'
+                        ? `${winnerValue} reps`
+                        : `${kgToLbs(winnerValue).toFixed(1)} lbs`)
+                    : null
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => setSelectedLiftId(v.id)}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '10px 14px',
+                        background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
+                        border: '1px solid #3a3a3a',
+                        borderRadius: '10px',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        textAlign: 'left',
+                        transition: 'all 0.2s ease',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#ff6b35' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#3a3a3a' }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
+                        <span>{v.display_name}</span>
+                        <span style={{ fontSize: '11px', fontWeight: 500, color: '#888' }}>
+                          {count === 0
+                            ? 'No entries yet'
+                            : <>👑 {winnerName || 'unknown'}{winnerText ? ` · ${winnerText}` : ''}</>}
+                        </span>
+                      </div>
+                      {count > 0 && (
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: '#888', whiteSpace: 'nowrap' }}>
+                          {count} {count === 1 ? 'entry' : 'entries'}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
               </div>
             </div>
           )
         })}
       </div>
+      <LiftersSidebar lifters={lifters} onSelect={setViewLifterId} />
+      </div>
+
+      {viewLifterId && (
+        <LifterStatsModal
+          lifter={lifters.find((l) => l.user_id === viewLifterId) || null}
+          onClose={() => setViewLifterId(null)}
+        />
+      )}
 
       {showProfile && (
         <ProfileModal
@@ -187,6 +273,8 @@ function ProfileCard({ profile, onEdit }: { profile: LiftProfile | null; onEdit:
 
   const ffmi = computeFFMI(profile)
   const pref = profile.unit_pref
+  const age = computeAge(profile.birth_date)
+  const vo2 = age !== null && profile.resting_hr ? computeVO2Max(computeMaxHR(age), profile.resting_hr) : null
 
   return (
     <div style={{
@@ -203,9 +291,11 @@ function ProfileCard({ profile, onEdit }: { profile: LiftProfile | null; onEdit:
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px 22px' }}>
             <Stat label="Height" value={formatHeight(profile.height_cm, pref)} />
             <Stat label="Weight" value={formatWeight(profile.weight_kg, pref)} />
+            {age !== null && <Stat label="Age" value={`${age}`} />}
             {profile.resting_hr !== null && <Stat label="Resting HR" value={`${profile.resting_hr} bpm`} />}
             {profile.body_fat_pct !== null && <Stat label="Body Fat" value={`${profile.body_fat_pct.toFixed(1)}%`} />}
             {ffmi !== null && <Stat label="FFMI" value={ffmi.toFixed(1)} />}
+            {vo2 !== null && <Stat label="VO2 max" value={vo2.toFixed(1)} />}
           </div>
         </div>
         <button onClick={onEdit} style={btnSecondary}>Edit</button>
@@ -257,6 +347,7 @@ function ProfileModal({
   })
   const [restingHr, setRestingHr] = useState(existing?.resting_hr?.toString() || '')
   const [bodyFat, setBodyFat] = useState(existing?.body_fat_pct?.toString() || '')
+  const [birthDate, setBirthDate] = useState(existing?.birth_date || '')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -316,6 +407,12 @@ function ProfileModal({
       if (!Number.isFinite(n) || n < 0 || n >= 70) { setError('Body fat must be between 0 and 70'); return }
       bf = n
     }
+    let dob: string | null = null
+    if (birthDate.trim()) {
+      const d = new Date(birthDate)
+      if (isNaN(d.getTime()) || d >= new Date()) { setError('Enter a valid date of birth'); return }
+      dob = birthDate
+    }
 
     setSubmitting(true)
     try {
@@ -325,6 +422,7 @@ function ProfileModal({
         weight_kg: weightKg,
         resting_hr: rhr,
         body_fat_pct: bf,
+        birth_date: dob,
         unit_pref: pref,
       })
       onSaved(saved)
@@ -413,7 +511,16 @@ function ProfileModal({
         />
       </Field>
 
-      <Field label="Resting heart rate (bpm, optional)">
+      <Field label="Date of birth (optional — used for max HR / VO2 max / composite score)">
+        <input
+          type="date"
+          value={birthDate}
+          onChange={(e) => setBirthDate(e.target.value)}
+          style={inputStyle}
+        />
+      </Field>
+
+      <Field label="Resting heart rate (bpm, optional — needed for VO2 max)">
         <input
           type="number"
           value={restingHr}
@@ -433,6 +540,8 @@ function ProfileModal({
           style={inputStyle}
         />
       </Field>
+
+      <VO2Preview birthDate={birthDate} restingHr={restingHr} />
 
       {error && <div style={errorStyle}>{error}</div>}
 
@@ -525,12 +634,41 @@ function CoreLiftDetail({
 
       <div style={{
         background: '#0a0a0a', borderRadius: '12px', border: '1px solid #3a3a3a',
-        padding: '20px', marginBottom: '20px',
+        marginBottom: '20px', overflow: 'hidden',
       }}>
-        <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', margin: '0 0 4px 0' }}>
-          <span style={{ marginRight: '8px' }}>{EXERCISE_EMOJI[lift.exercise]}</span>
-          {EXERCISE_LABEL[lift.exercise]} — {lift.display_name}
-        </h3>
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          height: '260px',
+          background: '#000',
+        }}>
+          <img
+            src={EXERCISE_IMAGE[lift.exercise]}
+            alt={EXERCISE_LABEL[lift.exercise]}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+          />
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(180deg, rgba(0,0,0,0) 60%, rgba(0,0,0,0.9) 100%)',
+            pointerEvents: 'none',
+          }} />
+          <h3 style={{
+            position: 'absolute',
+            left: '20px',
+            right: '20px',
+            bottom: '16px',
+            fontSize: '24px',
+            fontWeight: 800,
+            color: '#fff',
+            margin: 0,
+            textShadow: '0 2px 10px rgba(0,0,0,0.9)',
+          }}>
+            <span style={{ marginRight: '8px' }}>{EXERCISE_EMOJI[lift.exercise]}</span>
+            {EXERCISE_LABEL[lift.exercise]} — {lift.display_name}
+          </h3>
+        </div>
+        <div style={{ padding: '20px' }}>
         <p style={{ color: '#888', fontSize: '13px', margin: '0 0 14px 0' }}>
           {isAmrap
             ? 'Ranked by reps. Pound-for-pound view not applicable.'
@@ -575,6 +713,7 @@ function CoreLiftDetail({
               Next entry in {formatRemaining(cooldownUntilMs - Date.now())}
             </div>
           )}
+        </div>
         </div>
       </div>
 
@@ -869,6 +1008,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
+function VO2Preview({ birthDate, restingHr }: { birthDate: string; restingHr: string }) {
+  const age = computeAge(birthDate.trim() || null)
+  const rhr = parseInt(restingHr, 10)
+  const hasRhr = Number.isFinite(rhr) && rhr > 0
+  if (age === null && !hasRhr) return null
+  const maxHR = age !== null ? computeMaxHR(age) : null
+  const vo2 = age !== null && hasRhr ? computeVO2Max(maxHR!, rhr) : null
+  return (
+    <div style={{
+      background: 'rgba(255, 107, 53, 0.08)',
+      border: '1px solid rgba(255, 107, 53, 0.25)',
+      borderRadius: '10px',
+      padding: '10px 12px',
+      marginBottom: '14px',
+      fontSize: '12px',
+      color: '#ddd',
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '4px 14px',
+    }}>
+      {age !== null && <span><b style={{ color: '#fff' }}>Age</b>: {age}</span>}
+      {maxHR !== null && <span><b style={{ color: '#fff' }}>Max HR</b>: {maxHR} bpm</span>}
+      {vo2 !== null && <span><b style={{ color: '#fff' }}>Est. VO2 max</b>: {vo2.toFixed(1)} ml/kg/min</span>}
+      {age !== null && !hasRhr && <span style={{ color: '#888' }}>Add resting HR to estimate VO2 max.</span>}
+    </div>
+  )
+}
+
 function formatRemaining(ms: number): string {
   if (ms <= 0) return '0m'
   const hours = Math.floor(ms / (1000 * 60 * 60))
@@ -905,4 +1072,266 @@ const btnSecondary: React.CSSProperties = {
   padding: '10px 18px', background: 'transparent', color: '#888',
   border: '1px solid #3a3a3a', borderRadius: '10px', cursor: 'pointer',
   fontWeight: 600, fontSize: '14px',
+}
+
+function CompositeScoreCard({
+  rows,
+  currentUserId,
+}: {
+  rows: CompositeScoreRow[]
+  currentUserId: string
+}) {
+  return (
+    <div style={{
+      marginTop: '20px',
+      background: 'linear-gradient(135deg, rgba(255, 107, 53, 0.06) 0%, rgba(255, 69, 0, 0.03) 100%)',
+      border: '1px solid rgba(255, 107, 53, 0.3)',
+      borderRadius: '12px',
+      padding: '16px 18px',
+    }}>
+      <div style={{ fontSize: '13px', fontWeight: 700, color: '#ff9469', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+        Warrior Quotient
+      </div>
+      <div style={{ fontSize: '11px', color: '#888', marginBottom: '12px', lineHeight: 1.5 }}>
+        Strength × endurance, normalised to bodyweight.
+        <br />
+        (Squat 1RM + Bench 1RM + Deadlift 1RM) × VO2 max ÷ bodyweight, where VO2 max = (220 − age) ÷ resting HR × 15.3.
+        Needs DOB, resting HR, and a 1RM in all three lifts.
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: '13px', color: '#888', padding: '6px 0' }}>
+          No one qualifies yet — add your DOB, resting HR, and 1RM submissions for squat, bench, and deadlift.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {rows.map((r, i) => {
+            const rank = i + 1
+            const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null
+            const isMe = r.user_id === currentUserId
+            const name = r.display_name || r.username
+            return (
+              <div key={r.user_id} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '8px 10px',
+                background: isMe ? 'rgba(255, 107, 53, 0.12)' : '#0a0a0a',
+                border: isMe ? '1px solid rgba(255, 107, 53, 0.4)' : '1px solid #2a2a2a',
+                borderRadius: '10px',
+              }}>
+                <div style={{ width: '32px', textAlign: 'center', fontSize: medal ? '18px' : '13px', fontWeight: 700, color: medal ? undefined : '#888' }}>
+                  {medal || `#${rank}`}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#fff' }}>
+                    {name} <span style={{ color: '#888', fontWeight: 500 }}>· Lv.{r.avatar_level} · age {r.age}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#888', fontWeight: 500 }}>
+                    Total {kgToLbs(r.total_kg).toFixed(0)} lbs · VO2 {r.vo2_max.toFixed(1)} · BW {kgToLbs(r.bodyweight_kg).toFixed(0)} lbs
+                  </div>
+                </div>
+                <div style={{ fontSize: '15px', fontWeight: 800, color: '#ff6b35', whiteSpace: 'nowrap' }}>
+                  {r.score.toFixed(1)}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LiftersSidebar({
+  lifters,
+  onSelect,
+}: {
+  lifters: LifterListing[]
+  onSelect: (userId: string) => void
+}) {
+  return (
+    <aside className="lifters-sidebar">
+      <div style={{
+        background: '#0a0a0a',
+        border: '1px solid #3a3a3a',
+        borderRadius: '12px',
+        padding: '14px 14px 6px 14px',
+      }}>
+        <div style={{ fontSize: '13px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+          Lifters ({lifters.length})
+        </div>
+        {lifters.length === 0 ? (
+          <div style={{ fontSize: '12px', color: '#888', padding: '6px 0 12px 0' }}>
+            No one has set up a lift profile yet.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '420px', overflowY: 'auto', paddingBottom: '8px' }}>
+            {lifters.map((l) => {
+              const name = l.display_name || l.username
+              return (
+                <button
+                  key={l.user_id}
+                  onClick={() => onSelect(l.user_id)}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    gap: '2px',
+                    padding: '8px 10px',
+                    background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
+                    border: '1px solid #3a3a3a',
+                    borderRadius: '10px',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    textAlign: 'left',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#ff6b35' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#3a3a3a' }}
+                >
+                  <span>{name} <span style={{ color: '#888', fontWeight: 500 }}>· Lv.{l.avatar_level}</span></span>
+                  <span style={{ fontSize: '11px', color: '#888', fontWeight: 500 }}>
+                    {formatHeight(l.height_cm, l.unit_pref)} · {formatWeight(l.weight_kg, l.unit_pref, 0)}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+function LifterStatsModal({
+  lifter,
+  onClose,
+}: {
+  lifter: LifterListing | null
+  onClose: () => void
+}) {
+  const [entries, setEntries] = useState<UserCoreLiftEntry[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!lifter) return
+    let cancelled = false
+    setEntries(null)
+    setError(null)
+    getUserCoreLiftStats(lifter.user_id)
+      .then((rows) => { if (!cancelled) setEntries(rows) })
+      .catch((e) => { if (!cancelled) setError(e?.message || 'Failed to load stats') })
+    return () => { cancelled = true }
+  }, [lifter])
+
+  if (!lifter) return null
+  const pref = lifter.unit_pref
+  const ffmi = computeFFMI(lifter)
+  const age = computeAge(lifter.birth_date)
+  const vo2 = age !== null && lifter.resting_hr ? computeVO2Max(computeMaxHR(age), lifter.resting_hr) : null
+  const name = lifter.display_name || lifter.username
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+        zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '16px',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#0a0a0a',
+          border: '1px solid #3a3a3a',
+          borderRadius: '14px',
+          padding: '20px',
+          maxWidth: '560px',
+          width: '100%',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '14px' }}>
+          <div>
+            <div style={{ fontSize: '18px', fontWeight: 800, color: '#fff' }}>{name}</div>
+            <div style={{ fontSize: '12px', color: '#888' }}>@{lifter.username} · Lv.{lifter.avatar_level}</div>
+          </div>
+          <button onClick={onClose} style={btnSecondary}>Close</button>
+        </div>
+
+        <div style={{
+          background: '#101010',
+          border: '1px solid #2a2a2a',
+          borderRadius: '10px',
+          padding: '12px 14px',
+          marginBottom: '16px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '14px 22px',
+        }}>
+          <Stat label="Height" value={formatHeight(lifter.height_cm, pref)} />
+          <Stat label="Weight" value={formatWeight(lifter.weight_kg, pref)} />
+          {age !== null && <Stat label="Age" value={`${age}`} />}
+          {lifter.resting_hr !== null && <Stat label="Resting HR" value={`${lifter.resting_hr} bpm`} />}
+          {lifter.body_fat_pct !== null && <Stat label="Body Fat" value={`${lifter.body_fat_pct.toFixed(1)}%`} />}
+          {ffmi !== null && <Stat label="FFMI" value={ffmi.toFixed(1)} />}
+          {vo2 !== null && <Stat label="VO2 max" value={vo2.toFixed(1)} />}
+        </div>
+
+        <div style={{ fontSize: '13px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+          Core Lift Bests
+        </div>
+
+        {error && <div style={errorStyle}>{error}</div>}
+        {!error && entries === null && (
+          <div style={{ color: '#888', fontSize: '13px', padding: '8px 0' }}>Loading...</div>
+        )}
+        {!error && entries && entries.length === 0 && (
+          <div style={{ color: '#888', fontSize: '13px', padding: '8px 0' }}>No core lift submissions yet.</div>
+        )}
+        {!error && entries && entries.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {entries.map((e) => {
+              const valueText = e.unit === 'reps'
+                ? `${e.value} reps`
+                : formatWeight(e.value, pref, 1)
+              const liftedText = e.variant === 'weighted_1rm'
+                ? ` (lifted ${formatWeight(e.bodyweight_kg + e.value, pref, 1)})`
+                : ''
+              return (
+                <div key={e.core_lift_id} style={{
+                  background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',
+                  border: '1px solid #3a3a3a',
+                  borderRadius: '10px',
+                  padding: '10px 12px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '10px',
+                }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#fff' }}>
+                      {EXERCISE_EMOJI[e.exercise]} {EXERCISE_LABEL[e.exercise]} — {e.display_name}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#888', fontWeight: 500 }}>
+                      Rank #{e.rank} of {e.totalEntries}
+                      {e.dots !== null ? ` · DOTS ${e.dots.toFixed(1)}` : ''}
+                      {liftedText}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#ff6b35', whiteSpace: 'nowrap' }}>
+                    {valueText}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

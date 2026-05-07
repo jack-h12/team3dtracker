@@ -13,8 +13,31 @@ export type LiftProfile = {
   weight_kg: number
   resting_hr: number | null
   body_fat_pct: number | null
+  birth_date: string | null      // ISO date 'YYYY-MM-DD'
   unit_pref: UnitPref
   updated_at: string
+}
+
+export function computeAge(birthDate: string | null): number | null {
+  if (!birthDate) return null
+  const dob = new Date(birthDate)
+  if (isNaN(dob.getTime())) return null
+  const now = new Date()
+  let age = now.getFullYear() - dob.getFullYear()
+  const m = now.getMonth() - dob.getMonth()
+  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age--
+  return age >= 0 ? age : null
+}
+
+// Tanaka-style: simple 220 - age estimate (matches user's spec).
+export function computeMaxHR(age: number): number {
+  return 220 - age
+}
+
+// Uth-Sørensen-Overgaard-Pedersen: VO2 max ≈ (MHR / RHR) × 15.3.
+export function computeVO2Max(maxHR: number, restingHR: number): number | null {
+  if (!(restingHR > 0)) return null
+  return (maxHR / restingHR) * 15.3
 }
 
 export const LBS_PER_KG = 2.2046226218
@@ -32,6 +55,52 @@ export function computeFFMI(p: Pick<LiftProfile, 'height_cm' | 'weight_kg' | 'bo
   if (heightM <= 0) return null
   const lbmKg = p.weight_kg * (1 - p.body_fat_pct / 100)
   return lbmKg / (heightM * heightM) + 6.1 * (1.8 - heightM)
+}
+
+export type LifterListing = {
+  user_id: string
+  height_cm: number
+  weight_kg: number
+  resting_hr: number | null
+  body_fat_pct: number | null
+  birth_date: string | null
+  unit_pref: UnitPref
+  updated_at: string
+  username: string
+  display_name: string | null
+  avatar_level: number
+}
+
+// Every user with a lift profile, joined with their public profile fields,
+// for the Lifters sidebar.
+export async function listLifters(): Promise<LifterListing[]> {
+  const { data, error } = await supabase
+    .from('lift_profiles')
+    .select('*')
+    .order('updated_at', { ascending: false })
+  if (error) throw error
+  const profiles = (data || []) as LiftProfile[]
+  if (profiles.length === 0) return []
+
+  const userIds = profiles.map((p) => p.user_id)
+  const { data: users } = await supabase
+    .from('profiles')
+    .select('id, username, display_name, avatar_level')
+    .in('id', userIds)
+  const map = new Map<string, { username: string; display_name: string | null; avatar_level: number }>()
+  for (const u of (users || []) as Array<{ id: string; username: string; display_name: string | null; avatar_level: number }>) {
+    map.set(u.id, { username: u.username, display_name: u.display_name, avatar_level: u.avatar_level })
+  }
+
+  return profiles.map((p) => {
+    const u = map.get(p.user_id)
+    return {
+      ...p,
+      username: u?.username || 'unknown',
+      display_name: u?.display_name || null,
+      avatar_level: u?.avatar_level || 0,
+    }
+  })
 }
 
 export async function getProfile(userId: string): Promise<LiftProfile | null> {
@@ -58,6 +127,7 @@ export async function upsertProfile(input: {
   weight_kg: number
   resting_hr?: number | null
   body_fat_pct?: number | null
+  birth_date?: string | null
   unit_pref: UnitPref
 }): Promise<LiftProfile> {
   const payload = {
@@ -66,6 +136,7 @@ export async function upsertProfile(input: {
     weight_kg: input.weight_kg,
     resting_hr: input.resting_hr ?? null,
     body_fat_pct: input.body_fat_pct ?? null,
+    birth_date: input.birth_date ?? null,
     unit_pref: input.unit_pref,
     updated_at: new Date().toISOString(),
   }

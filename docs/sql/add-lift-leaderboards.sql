@@ -2,7 +2,10 @@
 -- LIFT LEADERBOARDS
 -- User-created weekly competitions (e.g. 5RM bench press) where
 -- participants log a personal best with a video proof.
--- The top submitter at end-of-week wins 250 XP and 500 gold.
+-- End-of-week rewards:
+--   1st place: 250 XP + 500 gold
+--   2nd place: 150 XP + 300 gold
+--   3rd place:  75 XP + 150 gold
 -- Each user may only create one leaderboard per 7-day window.
 -- ============================================
 
@@ -17,9 +20,16 @@ CREATE TABLE IF NOT EXISTS lift_leaderboards (
   ends_at TIMESTAMPTZ NOT NULL,
   status TEXT NOT NULL DEFAULT 'active', -- 'active' | 'completed'
   winner_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  second_place_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  third_place_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
   reward_distributed BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Backfill columns on databases where the table already exists
+ALTER TABLE lift_leaderboards
+  ADD COLUMN IF NOT EXISTS second_place_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS third_place_id UUID REFERENCES profiles(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS lift_submissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -120,7 +130,10 @@ SET search_path = public
 AS $$
 DECLARE
   lb RECORD;
-  top_user UUID;
+  top_users UUID[];
+  first_user UUID;
+  second_user UUID;
+  third_user UUID;
 BEGIN
   FOR lb IN
     SELECT id FROM lift_leaderboards
@@ -128,29 +141,46 @@ BEGIN
       AND ends_at <= NOW()
       AND reward_distributed = FALSE
   LOOP
-    SELECT user_id INTO top_user
-    FROM lift_submissions
-    WHERE leaderboard_id = lb.id
-    ORDER BY value DESC, created_at ASC
-    LIMIT 1;
+    SELECT ARRAY(
+      SELECT user_id
+      FROM lift_submissions
+      WHERE leaderboard_id = lb.id
+      ORDER BY value DESC, created_at ASC
+      LIMIT 3
+    ) INTO top_users;
 
-    IF top_user IS NOT NULL THEN
+    first_user  := top_users[1];
+    second_user := top_users[2];
+    third_user  := top_users[3];
+
+    IF first_user IS NOT NULL THEN
       UPDATE profiles
       SET lifetime_exp = lifetime_exp + 250,
           gold = gold + 500
-      WHERE id = top_user;
-
-      UPDATE lift_leaderboards
-      SET status = 'completed',
-          winner_id = top_user,
-          reward_distributed = TRUE
-      WHERE id = lb.id;
-    ELSE
-      UPDATE lift_leaderboards
-      SET status = 'completed',
-          reward_distributed = TRUE
-      WHERE id = lb.id;
+      WHERE id = first_user;
     END IF;
+
+    IF second_user IS NOT NULL THEN
+      UPDATE profiles
+      SET lifetime_exp = lifetime_exp + 150,
+          gold = gold + 300
+      WHERE id = second_user;
+    END IF;
+
+    IF third_user IS NOT NULL THEN
+      UPDATE profiles
+      SET lifetime_exp = lifetime_exp + 75,
+          gold = gold + 150
+      WHERE id = third_user;
+    END IF;
+
+    UPDATE lift_leaderboards
+    SET status = 'completed',
+        winner_id = first_user,
+        second_place_id = second_user,
+        third_place_id = third_user,
+        reward_distributed = TRUE
+    WHERE id = lb.id;
   END LOOP;
 END;
 $$;

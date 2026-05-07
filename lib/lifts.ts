@@ -4,7 +4,8 @@
  * User-created weekly lift competitions. One creation per user per 7 days.
  * Submissions include a value (e.g. weight) and a video proof. Users may submit
  * multiple entries to the same leaderboard, but at most one per 24 hours.
- * Top submitter at end-of-week gets 250 XP + 500 gold (handled DB-side).
+ * End-of-week rewards (handled DB-side):
+ *   1st: 250 XP + 500 gold, 2nd: 150 XP + 300 gold, 3rd: 75 XP + 150 gold.
  */
 
 import { supabase } from './supabase'
@@ -19,6 +20,8 @@ export type LiftLeaderboard = {
   ends_at: string
   status: 'active' | 'completed'
   winner_id: string | null
+  second_place_id: string | null
+  third_place_id: string | null
   reward_distributed: boolean
   created_at: string
 }

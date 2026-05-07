@@ -156,3 +156,25 @@ a {
   h4 { font-size: clamp(14px, 3.5vw, 20px) !important; }
 }
 
+/* Core Lifts page: list + lifters sidebar */
+.core-lifts-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.lifters-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+}
+@media (max-width: 768px) {
+  .core-lifts-layout {
+    flex-direction: column;
+  }
+  .lifters-sidebar {
+    width: 100%;
+    position: static;
+  }
+}
+
