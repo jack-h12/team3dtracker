@@ -13,8 +13,10 @@
 
 import { supabase } from './supabase'
 import type { FriendRequest } from './supabase'
+import { isGuest, requireAccount } from './guest'
 
 export async function sendFriendRequest(senderId: string, receiverId: string): Promise<FriendRequest> {
+  if (isGuest(senderId)) requireAccount('send friend requests')
   // Check if request already exists
   const { data: existing } = await supabase
     .from('friend_requests')
@@ -42,6 +44,7 @@ export async function sendFriendRequest(senderId: string, receiverId: string): P
 }
 
 export async function getFriendRequests(userId: string, signal?: AbortSignal): Promise<FriendRequest[]> {
+  if (isGuest(userId)) return []
   const query = supabase
     .from('friend_requests')
     .select('*')
@@ -77,6 +80,7 @@ export async function rejectFriendRequest(requestId: string): Promise<void> {
 }
 
 export async function getFriends(userId: string, signal?: AbortSignal): Promise<FriendRequest[]> {
+  if (isGuest(userId)) return []
   const query = supabase
     .from('friend_requests')
     .select('*')

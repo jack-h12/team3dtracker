@@ -10,6 +10,7 @@
 import { supabase } from './supabase'
 import { addDays } from './tasks'
 import type { DailyTaskSnapshot, DailyLeaderboardSnapshot, DailyNote } from './supabase'
+import { isGuest } from './guest'
 
 export type WeeklyLeaderboardEntry = {
   user_id: string
@@ -21,6 +22,18 @@ export type WeeklyLeaderboardEntry = {
 }
 
 export async function getAvailableDates(userId: string): Promise<string[]> {
+  if (isGuest(userId)) {
+    // Guest has no personal task snapshots — fall back to every date that
+    // has a public daily leaderboard snapshot so the calendar grid is
+    // browsable instead of empty.
+    const { data, error } = await supabase
+      .from('daily_leaderboard_snapshots')
+      .select('snapshot_date')
+    if (error) throw error
+    const seen = new Set<string>()
+    for (const r of (data || []) as { snapshot_date: string }[]) seen.add(r.snapshot_date)
+    return Array.from(seen)
+  }
   const { data, error } = await supabase
     .from('daily_task_snapshots')
     .select('snapshot_date')
@@ -42,6 +55,7 @@ export async function getAvailableDates(userId: string): Promise<string[]> {
 }
 
 export async function getTaskSnapshot(userId: string, date: string): Promise<DailyTaskSnapshot[]> {
+  if (isGuest(userId)) return []
   const { data, error } = await supabase
     .from('daily_task_snapshots')
     .select('*')
@@ -65,6 +79,7 @@ export async function getLeaderboardSnapshot(date: string): Promise<DailyLeaderb
 }
 
 export async function getNoteSnapshot(userId: string, date: string): Promise<DailyNote | null> {
+  if (isGuest(userId)) return null
   const { data, error } = await supabase
     .from('daily_notes')
     .select('*')
@@ -134,6 +149,7 @@ export function isSunday(dateStr: string): boolean {
 }
 
 export async function getDatesWithNotes(userId: string): Promise<string[]> {
+  if (isGuest(userId)) return []
   const { data, error } = await supabase
     .from('daily_notes')
     .select('note_date')

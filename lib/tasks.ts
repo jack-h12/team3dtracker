@@ -18,6 +18,16 @@
 
 import { supabase } from './supabase'
 import type { Task, Profile } from './supabase'
+import {
+  isGuest,
+  hasGuestTask,
+  getGuestTasksForDate,
+  addGuestTask,
+  updateGuestTask,
+  deleteGuestTask,
+  completeGuestTask,
+  uncompleteGuestTask,
+} from './guest'
 
 // Each task is a deterministic 50/50 coin flip for 0 or 20 EXP. Hashing the
 // task UUID (rather than calling Math.random) means toggling the checkbox
@@ -129,6 +139,7 @@ export function addDays(dateStr: string, delta: number): string {
 }
 
 export async function getTasksForDate(userId: string, date: string, signal?: AbortSignal): Promise<Task[]> {
+  if (isGuest(userId)) return getGuestTasksForDate(date)
   const query = supabase
     .from('tasks')
     .select('*')
@@ -157,6 +168,7 @@ export async function addTask(
   taskDate?: string
 ): Promise<Task> {
   const date = taskDate || getCurrentTaskDate()
+  if (isGuest(userId)) return addGuestTask(description, reward ?? null, date)
   const currentTasks = await getTasksForDate(userId, date)
   if (currentTasks.length >= 10) {
     throw new Error('Maximum 10 tasks per day')
@@ -301,6 +313,8 @@ export async function copyTasksFromDate(
 }
 
 export async function updateTask(taskId: string, updates: Partial<Task>): Promise<Task> {
+  // Guest task ids live only in sessionStorage and never in Supabase.
+  if (hasGuestTask(taskId)) return updateGuestTask(taskId, updates)
   const { data, error } = await ((supabase
     .from('tasks') as any)
     .update(updates)
@@ -329,6 +343,7 @@ async function countDoneTodayAndFuture(userId: string): Promise<number> {
 }
 
 export async function completeTask(taskId: string, userId: string, _currentTasks?: Task[]): Promise<Profile> {
+  if (isGuest(userId)) return completeGuestTask(taskId, getCurrentTaskDate())
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('*')
@@ -427,6 +442,7 @@ export async function completeTask(taskId: string, userId: string, _currentTasks
 }
 
 export async function uncompleteTask(taskId: string, userId: string, _currentTasks?: Task[]): Promise<Profile> {
+  if (isGuest(userId)) return uncompleteGuestTask(taskId, getCurrentTaskDate())
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('*')
@@ -515,6 +531,7 @@ export async function uncompleteTask(taskId: string, userId: string, _currentTas
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
+  if (hasGuestTask(taskId)) { deleteGuestTask(taskId); return }
   const { error } = await supabase
     .from('tasks')
     .delete()
@@ -524,6 +541,12 @@ export async function deleteTask(taskId: string): Promise<void> {
 }
 
 export async function updateTaskOrder(userId: string, taskOrders: { taskId: string; order: number }[]): Promise<void> {
+  if (isGuest(userId)) {
+    for (const { taskId, order } of taskOrders) {
+      if (hasGuestTask(taskId)) updateGuestTask(taskId, { task_order: order })
+    }
+    return
+  }
   // Update all task orders in a transaction-like manner
   const updates = taskOrders.map(({ taskId, order }) =>
     (supabase

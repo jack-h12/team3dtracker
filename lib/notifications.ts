@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { isGuest } from './guest'
 
 export type AttackNotification = {
   id: string
@@ -12,6 +13,7 @@ export type AttackNotification = {
 }
 
 export async function getNotifications(userId: string, signal?: AbortSignal): Promise<AttackNotification[]> {
+  if (isGuest(userId)) return []
   const query = supabase
     .from('attack_notifications')
     .select('*')
@@ -29,6 +31,7 @@ export async function getNotifications(userId: string, signal?: AbortSignal): Pr
 }
 
 export async function getUnreadCount(userId: string, signal?: AbortSignal): Promise<number> {
+  if (isGuest(userId)) return 0
   const query = supabase
     .from('attack_notifications')
     .select('id', { count: 'exact', head: true })

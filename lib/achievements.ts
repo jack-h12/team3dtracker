@@ -13,6 +13,7 @@
  */
 
 import { supabase } from './supabase'
+import { isGuest } from './guest'
 
 export interface Achievement {
   id: string
@@ -61,6 +62,7 @@ export async function getAchievements(signal?: AbortSignal): Promise<Achievement
  * Get achievements unlocked by a specific user
  */
 export async function getUserAchievements(userId: string, signal?: AbortSignal): Promise<UserAchievement[]> {
+  if (isGuest(userId)) return []
   const query = supabase
     .from('user_achievements')
     .select(`
@@ -93,6 +95,7 @@ export async function getUserAchievements(userId: string, signal?: AbortSignal):
  * Returns true if unlocked, false if already unlocked or doesn't exist
  */
 export async function unlockAchievement(userId: string, achievementCode: string): Promise<boolean> {
+  if (isGuest(userId)) return false
   const { data, error } = await (supabase.rpc as any)('unlock_achievement', {
     user_id_param: userId,
     achievement_code_param: achievementCode
@@ -289,6 +292,7 @@ export async function checkSpecialAchievements(
  */
 export async function getAchievementProgress(userId: string): Promise<Map<string, number>> {
   const progress = new Map<string, number>()
+  if (isGuest(userId)) return progress
 
   // Get user's profile stats
   const { data: profile } = await supabase

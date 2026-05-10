@@ -4,6 +4,7 @@
  */
 
 import { supabase } from './supabase'
+import { isGuest, requireAccount } from './guest'
 
 export type UnitPref = 'imperial' | 'metric'
 
@@ -104,6 +105,7 @@ export async function listLifters(): Promise<LifterListing[]> {
 }
 
 export async function getProfile(userId: string): Promise<LiftProfile | null> {
+  if (isGuest(userId)) return null
   const { data, error } = await supabase
     .from('lift_profiles')
     .select('*')
@@ -130,6 +132,7 @@ export async function upsertProfile(input: {
   birth_date?: string | null
   unit_pref: UnitPref
 }): Promise<LiftProfile> {
+  if (isGuest(input.user_id)) requireAccount('save a lifting profile')
   const payload = {
     user_id: input.user_id,
     height_cm: input.height_cm,

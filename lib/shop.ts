@@ -17,6 +17,7 @@
 import { supabase } from './supabase'
 import { createAttackNotification } from './notifications'
 import type { ShopItem, UserInventory, Profile } from './supabase'
+import { isGuest, requireAccount } from './guest'
 
 export async function getShopItems(signal?: AbortSignal): Promise<ShopItem[]> {
   const query = supabase
@@ -35,6 +36,7 @@ export async function getShopItems(signal?: AbortSignal): Promise<ShopItem[]> {
 }
 
 export async function purchaseItem(userId: string, itemId: string): Promise<void> {
+  if (isGuest(userId)) requireAccount('purchase items')
   // Get item details
   const { data: item, error: itemError } = await supabase
     .from('shop_items')
@@ -117,6 +119,7 @@ export async function purchaseItem(userId: string, itemId: string): Promise<void
 }
 
 export async function getUserInventory(userId: string, signal?: AbortSignal): Promise<(UserInventory & { item: ShopItem })[]> {
+  if (isGuest(userId)) return []
   const query = supabase
     .from('user_inventory')
     .select(`
@@ -162,6 +165,7 @@ export async function getUserInventory(userId: string, signal?: AbortSignal): Pr
 }
 
 export async function useItem(userId: string, inventoryId: string, targetUserId?: string, customName?: string): Promise<void> {
+  if (isGuest(userId)) requireAccount('use items')
   // Get inventory item
   const { data: inventory, error: invError } = await supabase
     .from('user_inventory')

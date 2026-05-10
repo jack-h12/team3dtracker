@@ -21,6 +21,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getShopItems, purchaseItem, getUserInventory, useItem, getEffectDescription, getProtectionValue, getWeaponDamage } from '@/lib/shop'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
 import { getDisplayName, supabase } from '@/lib/supabase'
+import { isGuest, getGuestProfile } from '@/lib/guest'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage, getItemImage } from '@/lib/utils'
@@ -61,11 +62,14 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       setLoading(true)
     }
     try {
+      const guest = isGuest(userId)
       const [shopItems, userInv, users, profileResult] = await Promise.all([
         withRetry(({ signal }) => getShopItems(signal), { maxRetries: 3, timeout: 15000 }),
         withRetry(({ signal }) => getUserInventory(userId, signal), { maxRetries: 3, timeout: 15000 }),
         withRetry(({ signal }) => getDailyLeaderboard(signal), { maxRetries: 3, timeout: 15000 }),
-        supabase.from('profiles').select('gold').eq('id', userId).single(),
+        guest
+          ? Promise.resolve({ data: { gold: getGuestProfile().gold } })
+          : supabase.from('profiles').select('gold').eq('id', userId).single(),
       ])
 
       if (mountedRef.current) {

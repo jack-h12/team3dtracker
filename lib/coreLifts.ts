@@ -13,6 +13,7 @@
 
 import { supabase } from './supabase'
 import { computeAge, computeMaxHR, computeVO2Max } from './liftProfile'
+import { isGuest, requireAccount } from './guest'
 
 export type Exercise = 'squat' | 'bench' | 'deadlift' | 'ohp' | 'pullup' | 'dips' | 'row'
 export type Variant = '1rm' | '5rm' | '10rm' | 'amrap_bw' | 'weighted_1rm'
@@ -334,6 +335,7 @@ export type UserCoreLiftEntry = {
 
 // All of a user's core-lift submissions (best per lift) plus their absolute rank.
 export async function getUserCoreLiftStats(userId: string): Promise<UserCoreLiftEntry[]> {
+  if (isGuest(userId)) return []
   const [{ data: liftsData, error: liftsErr }, { data: subsData, error: subsErr }] = await Promise.all([
     supabase.from('core_lifts').select('*'),
     supabase.from('core_lift_submissions').select('core_lift_id, user_id, value, bodyweight_kg, video_url, notes, created_at'),
@@ -401,6 +403,7 @@ export async function submitCoreLiftEntry(input: {
   video_url: string
   notes?: string | null
 }): Promise<CoreLiftSubmission> {
+  if (isGuest(input.user_id)) requireAccount('submit a core lift entry')
   const payload = {
     core_lift_id: input.core_lift_id,
     user_id: input.user_id,

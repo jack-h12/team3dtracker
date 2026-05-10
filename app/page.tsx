@@ -34,6 +34,8 @@ import { isAdmin } from '@/lib/admin'
 import { setModalStateSetter, getModalState, closeModal } from '@/lib/modal'
 import type { Profile } from '@/lib/supabase'
 import type { User } from '@supabase/supabase-js'
+import { GUEST_USER_ID, isGuest, initGuestState, clearGuestState } from '@/lib/guest'
+import { getCurrentTaskDate } from '@/lib/tasks'
 
 type View = 'tasks' | 'leaderboard' | 'friends' | 'shop' | 'admin' | 'howtoplay' | 'calendar' | 'testosterone' | 'lifts'
 
@@ -297,6 +299,14 @@ export default function Home() {
     }
   }, [])
 
+  const handleGuestSignIn = useCallback(() => {
+    const guestProfile = initGuestState(getCurrentTaskDate())
+    setUser({ id: GUEST_USER_ID } as User)
+    setProfile(guestProfile)
+    setUserIsAdmin(false)
+    setLoading(false)
+  }, [])
+
   const handleTaskComplete = useCallback(async (updatedProfile?: Profile) => {
     if (updatedProfile) {
       // Use the provided profile to avoid re-fetching
@@ -541,7 +551,7 @@ export default function Home() {
   if (!user) {
     return (
       <>
-        <Auth onAuthSuccess={handleAuthSuccess} />
+        <Auth onAuthSuccess={handleAuthSuccess} onGuestSignIn={handleGuestSignIn} />
         {passwordResetModal}
       </>
     )
@@ -619,8 +629,39 @@ export default function Home() {
     )
   }
 
+  const guestMode = isGuest(user.id)
+
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0f0f0f 100%)' }}>
+      {guestMode && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(255, 107, 53, 0.18) 0%, rgba(255, 69, 0, 0.12) 100%)',
+          borderBottom: '1px solid rgba(255, 107, 53, 0.4)',
+          color: '#ffd0b8',
+          textAlign: 'center',
+          fontSize: '13px',
+          fontWeight: 600,
+          padding: '8px 12px',
+          letterSpacing: '0.3px',
+        }}>
+          Guest mode — your progress won&apos;t be saved.{' '}
+          <button
+            onClick={() => { clearGuestState(); setUser(null); setProfile(null) }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#ff6b35',
+              fontWeight: 700,
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              padding: 0,
+              fontSize: '13px',
+            }}
+          >
+            Sign up to save it
+          </button>
+        </div>
+      )}
       {/* Header */}
       <header style={{ 
         background: 'linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)',

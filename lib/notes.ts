@@ -1,7 +1,9 @@
 import { supabase } from './supabase'
 import type { DailyNote } from './supabase'
+import { isGuest, requireAccount } from './guest'
 
 export async function getNoteForDate(userId: string, date: string): Promise<DailyNote | null> {
+  if (isGuest(userId)) return null
   const { data, error } = await supabase
     .from('daily_notes')
     .select('*')
@@ -14,6 +16,7 @@ export async function getNoteForDate(userId: string, date: string): Promise<Dail
 }
 
 export async function upsertNote(userId: string, date: string, content: string): Promise<void> {
+  if (isGuest(userId)) requireAccount('save notes')
   const { error } = await supabase
     .from('daily_notes')
     .upsert(
@@ -25,6 +28,7 @@ export async function upsertNote(userId: string, date: string, content: string):
 }
 
 export async function getDatesWithNotes(userId: string): Promise<string[]> {
+  if (isGuest(userId)) return []
   const { data, error } = await supabase
     .from('daily_notes')
     .select('note_date')

@@ -27,8 +27,10 @@
 
 import { supabase } from './supabase'
 import type { Profile, Task } from './supabase'
+import { isGuest } from './guest'
 
 export async function isAdmin(userId: string): Promise<boolean> {
+  if (isGuest(userId)) return false
   const { data, error } = await supabase
     .from('profiles')
     .select('is_admin')

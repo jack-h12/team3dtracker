@@ -10,6 +10,7 @@
 import { supabase } from './supabase'
 import { addDays, getCurrentTaskDate } from './tasks'
 import type { Profile } from './supabase'
+import { isGuest, requireAccount } from './guest'
 
 export type Tier = 'gold' | 'silver' | 'bronze'
 
@@ -130,6 +131,7 @@ export async function getScoresForDate(
   date: string,
   signal?: AbortSignal
 ): Promise<ScoreMap> {
+  if (isGuest(userId)) return {}
   const query = supabase
     .from('testosterone_scores')
     .select('commandment, score')
@@ -153,6 +155,7 @@ export async function getScoresInRange(
   endDate: string,
   signal?: AbortSignal
 ): Promise<CommandmentScore[]> {
+  if (isGuest(userId)) return []
   const query = supabase
     .from('testosterone_scores')
     .select('commandment, score, score_date')
@@ -190,6 +193,7 @@ export async function upsertScore(
   score: number,
   date?: string
 ): Promise<void> {
+  if (isGuest(userId)) requireAccount('save 10 commandments scores')
   const score_date = date || getCurrentTaskDate()
   const clamped = Math.max(1, Math.min(10, Math.round(score)))
 

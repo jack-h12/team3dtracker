@@ -12,6 +12,7 @@
 
 import { supabase } from './supabase'
 import type { Profile } from './supabase'
+import { isGuest, getGuestProfile, clearGuestState } from './guest'
 
 export async function signUp(email: string, password: string, username: string) {
   // Prefer the configured app URL so confirmation emails always link to production
@@ -159,6 +160,8 @@ export async function updatePassword(newPassword: string) {
 }
 
 export async function signOut() {
+  // Always clear guest sandbox state too — guest mode shares the sign-out path.
+  clearGuestState()
   // Always attempt sign out; don't throw on error so local state is always cleared
   await supabase.auth.signOut()
 }
@@ -194,6 +197,7 @@ export async function getCurrentProfile(): Promise<Profile | null> {
  * round-trips that getCurrentProfile() does when we already know the user ID.
  */
 export async function getProfileById(userId: string): Promise<Profile | null> {
+  if (isGuest(userId)) return getGuestProfile()
   const { data, error } = await supabase
     .from('profiles')
     .select('*')

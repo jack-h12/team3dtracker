@@ -9,6 +9,7 @@
  */
 
 import { supabase } from './supabase'
+import { isGuest, requireAccount } from './guest'
 
 export type LiftLeaderboard = {
   id: string
@@ -175,6 +176,7 @@ export async function getSubmissions(leaderboardId: string): Promise<LiftSubmiss
 
 // Returns true if the user has created a leaderboard within the last 7 days
 export async function hasCreatedLeaderboardRecently(userId: string): Promise<{ blocked: boolean; nextAllowedAt: string | null }> {
+  if (isGuest(userId)) return { blocked: false, nextAllowedAt: null }
   const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const { data, error } = await supabase
     .from('lift_leaderboards')
@@ -197,6 +199,7 @@ export async function createLeaderboard(input: {
   description?: string
   unit: string
 }): Promise<LiftLeaderboard> {
+  if (isGuest(input.creator_id)) requireAccount('create a leaderboard')
   const startsAt = new Date()
   const endsAt = new Date(startsAt.getTime() + 7 * 24 * 60 * 60 * 1000)
 
@@ -218,6 +221,7 @@ export async function createLeaderboard(input: {
 }
 
 export async function uploadProofVideo(userId: string, file: File): Promise<string> {
+  if (isGuest(userId)) requireAccount('upload a video')
   if (file.size > MAX_VIDEO_BYTES) {
     throw new Error(`Video too large. Max ${Math.round(MAX_VIDEO_BYTES / 1024 / 1024)} MB.`)
   }
@@ -246,6 +250,7 @@ export async function submitEntry(input: {
   video_url: string
   notes?: string | null
 }): Promise<LiftSubmission> {
+  if (isGuest(input.user_id)) requireAccount('submit a lift')
   const payload = {
     leaderboard_id: input.leaderboard_id,
     user_id: input.user_id,

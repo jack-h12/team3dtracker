@@ -18,9 +18,10 @@ type AuthMode = 'login' | 'signup' | 'forgot'
 
 interface AuthProps {
   onAuthSuccess: (session?: { user: { id: string } }) => void
+  onGuestSignIn?: () => void
 }
 
-export default function Auth({ onAuthSuccess }: AuthProps) {
+export default function Auth({ onAuthSuccess, onGuestSignIn }: AuthProps) {
   const [mode, setMode] = useState<AuthMode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -138,6 +139,53 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             {isForgot ? 'Enter your email to receive a reset link' : 'Track your progress, dominate your goals'}
           </p>
         </div>
+
+        {onGuestSignIn && !isForgot && (
+          <>
+            <button
+              onClick={onGuestSignIn}
+              style={{
+                width: '100%',
+                padding: '14px',
+                marginBottom: '18px',
+                background: 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)',
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                color: '#fff',
+                fontWeight: 800,
+                fontSize: '15px',
+                letterSpacing: '0.5px',
+                boxShadow: '0 4px 14px rgba(255, 107, 53, 0.35)',
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px)'
+                e.currentTarget.style.boxShadow = '0 6px 18px rgba(255, 107, 53, 0.5)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)'
+                e.currentTarget.style.boxShadow = '0 4px 14px rgba(255, 107, 53, 0.35)'
+              }}
+            >
+              TRY IT — CONTINUE AS GUEST
+            </button>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              marginBottom: '18px',
+              color: '#666',
+              fontSize: '12px',
+              fontWeight: 600,
+              letterSpacing: '1px',
+            }}>
+              <div style={{ flex: 1, height: '1px', background: '#2a2a2a' }} />
+              OR
+              <div style={{ flex: 1, height: '1px', background: '#2a2a2a' }} />
+            </div>
+          </>
+        )}
 
         <form onSubmit={handleSubmit}>
           {mode === 'signup' && (
