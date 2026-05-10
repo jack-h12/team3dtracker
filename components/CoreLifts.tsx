@@ -1096,11 +1096,11 @@ function CompositeScoreCard({
         Strength × endurance, normalised to bodyweight.
         <br />
         (Squat 1RM + Bench 1RM + Deadlift 1RM) × VO2 max ÷ bodyweight, where VO2 max = (220 − age) ÷ resting HR × 15.3.
-        Needs DOB, resting HR, and a 1RM in all three lifts.
+        Needs DOB, resting HR, and a 1RM in all three lifts — a 5RM or 10RM works too (Epley-estimated to a 1RM).
       </div>
       {rows.length === 0 ? (
         <div style={{ fontSize: '13px', color: '#888', padding: '6px 0' }}>
-          No one qualifies yet — add your DOB, resting HR, and 1RM submissions for squat, bench, and deadlift.
+          No one qualifies yet — add your DOB, resting HR, and a 1RM (or 5RM/10RM) for squat, bench, and deadlift.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

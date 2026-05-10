@@ -275,6 +275,12 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
 
   useEffect(() => {
     mountedRef.current = true;
+    // [DIAG] Detect duplicate Tasks mounts.
+    const __diagW = (typeof window !== 'undefined' ? (window as any) : {}) as any
+    __diagW.__tasksMountCount = (__diagW.__tasksMountCount || 0) + 1
+    __diagW.__tasksMountSeq = (__diagW.__tasksMountSeq || 0) + 1
+    const __mountId = __diagW.__tasksMountSeq
+    console.log(`[DIAG][Tasks] mount #${__mountId} totalMounted=${__diagW.__tasksMountCount}`)
 
     // If tab was recently hidden, reset client before first load
     const initializeAndLoad = async () => {
@@ -328,6 +334,10 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       isLoadingRef.current = false;
+      // [DIAG] Detect duplicate Tasks mounts.
+      const __diagW = (typeof window !== 'undefined' ? (window as any) : {}) as any
+      __diagW.__tasksMountCount = Math.max(0, (__diagW.__tasksMountCount || 1) - 1)
+      console.log(`[DIAG][Tasks] unmount #${__mountId} totalMounted=${__diagW.__tasksMountCount}`)
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]) // loadTasks and checkReset are stable - they use refs for state management

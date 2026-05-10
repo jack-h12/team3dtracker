@@ -26,6 +26,20 @@ if (!supabaseUrl || !supabaseAnonKey) {
   }
 }
 
+// [DIAG] Module-level diagnostic counters used by lock + fetch wrappers below.
+// Remove this whole block (and the [DIAG] log statements) once the loading bug is diagnosed.
+const __diag = {
+  lockSeq: 0,
+  lockActive: 0,
+  fetchSeq: 0,
+  fetchActive: 0,
+  authCallSeq: 0,
+}
+if (typeof window !== 'undefined') {
+  ;(window as any).__supabaseDiag = __diag
+  console.log('[DIAG] supabase.ts module loaded at', new Date().toISOString())
+}
+
 // Track the active client so we can fully reset/replace it when needed
 let supabaseClient: SupabaseClient | null = null
 let isResettingClient = false
@@ -151,8 +165,19 @@ function createSupabaseClient(): SupabaseClient {
       // exclusive lock with no timeout, and every data query internally calls
       // getSession() which waits for the same lock forever. Without the lock,
       // the worst case is a redundant token refresh when multiple tabs are open.
-      lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => {
-        return await fn()
+      lock: async (name: string, acquireTimeout: number, fn: () => Promise<any>) => {
+        // [DIAG] Instrumented to log every lock acquisition with concurrency count.
+        const id = ++__diag.lockSeq
+        __diag.lockActive++
+        const start = performance.now()
+        console.log(`[DIAG][lock] enter #${id} name=${name} timeout=${acquireTimeout} active=${__diag.lockActive}`)
+        try {
+          return await fn()
+        } finally {
+          const elapsed = Math.round(performance.now() - start)
+          __diag.lockActive--
+          console.log(`[DIAG][lock] exit  #${id} name=${name} elapsed=${elapsed}ms active=${__diag.lockActive}`)
+        }
       }
     },
     global: {
@@ -173,12 +198,32 @@ function createSupabaseClient(): SupabaseClient {
           }
         }
 
+        // [DIAG] Instrumented to log every HTTP request with URL category and timing.
+        const id = ++__diag.fetchSeq
+        const urlStr = typeof input === 'string'
+          ? input
+          : input instanceof URL ? input.toString()
+          : (input as Request).url
+        const path = (() => { try { return new URL(urlStr).pathname } catch { return urlStr } })()
+        const category = path.includes('/auth/') ? 'auth' : path.includes('/rest/') ? 'rest' : path.includes('/storage/') ? 'storage' : 'other'
+        const method = init?.method || 'GET'
+        __diag.fetchActive++
+        const start = performance.now()
+        console.log(`[DIAG][fetch] start #${id} ${method} ${category} ${path} active=${__diag.fetchActive}`)
+
         try {
           const response = await fetch(input, { ...init, signal: controller.signal })
           clearTimeout(timeoutId)
+          const elapsed = Math.round(performance.now() - start)
+          __diag.fetchActive--
+          console.log(`[DIAG][fetch] done  #${id} status=${response.status} elapsed=${elapsed}ms active=${__diag.fetchActive}`)
           return response
-        } catch (err) {
+        } catch (err: any) {
           clearTimeout(timeoutId)
+          const elapsed = Math.round(performance.now() - start)
+          __diag.fetchActive--
+          const reason = controller.signal.aborted ? 'aborted' : (err?.name || 'error')
+          console.log(`[DIAG][fetch] FAIL  #${id} reason=${reason} msg=${err?.message} elapsed=${elapsed}ms active=${__diag.fetchActive}`)
           throw err
         }
       }
@@ -190,6 +235,47 @@ function createSupabaseClient(): SupabaseClient {
 }
 
 export let supabase = createSupabaseClient()
+
+// [DIAG] Monkey-patch auth methods to log entry/exit timing and outcome.
+// Remove this block once the loading bug is diagnosed.
+if (typeof window !== 'undefined') {
+  const wrapAuthMethod = <K extends 'getSession' | 'refreshSession' | 'startAutoRefresh' | 'stopAutoRefresh' | 'getUser'>(name: K) => {
+    const auth: any = supabase.auth
+    const original = auth[name]?.bind(auth)
+    if (!original) return
+    auth[name] = async (...args: any[]) => {
+      const id = ++__diag.authCallSeq
+      const start = performance.now()
+      console.log(`[DIAG][auth] start #${id} ${name}`)
+      try {
+        const result = await original(...args)
+        const elapsed = Math.round(performance.now() - start)
+        const summary = result?.error
+          ? `error=${result.error.message}`
+          : result?.data?.session
+            ? `session.expires_at=${result.data.session.expires_at} (in ${result.data.session.expires_at ? Math.round(result.data.session.expires_at - Date.now() / 1000) : '?'}s)`
+            : 'ok'
+        console.log(`[DIAG][auth] done  #${id} ${name} elapsed=${elapsed}ms ${summary}`)
+        return result
+      } catch (err: any) {
+        const elapsed = Math.round(performance.now() - start)
+        console.log(`[DIAG][auth] FAIL  #${id} ${name} elapsed=${elapsed}ms err=${err?.message}`)
+        throw err
+      }
+    }
+  }
+  wrapAuthMethod('getSession')
+  wrapAuthMethod('refreshSession')
+  wrapAuthMethod('startAutoRefresh')
+  wrapAuthMethod('stopAutoRefresh')
+  wrapAuthMethod('getUser')
+
+  // Log every auth state change event so we can see TOKEN_REFRESHED / SIGNED_IN ordering.
+  supabase.auth.onAuthStateChange((event, session) => {
+    const expIn = session?.expires_at ? Math.round(session.expires_at - Date.now() / 1000) : null
+    console.log(`[DIAG][auth] event=${event} hasSession=${!!session} expIn=${expIn}s`)
+  })
+}
 
 // On cold open, supabase-js leaves auto-refresh to a hidden→visible
 // visibilitychange event that never fires (the tab was never hidden).

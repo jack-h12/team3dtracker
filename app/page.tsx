@@ -106,7 +106,7 @@ export default function Home() {
       window.history.replaceState({}, '', window.location.pathname)
     }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return
 
       if (event === 'PASSWORD_RECOVERY') {
@@ -120,18 +120,27 @@ export default function Home() {
       if (event === 'INITIAL_SESSION') return
 
       if (session?.user) {
-        setUser(session.user)
-        try {
-          const userProfile = await getProfileById(session.user.id)
-          if (userProfile && mounted) {
-            setProfile(userProfile)
-            const adminStatus = await isAdmin(session.user.id)
-            if (mounted) setUserIsAdmin(adminStatus)
+        const sessionUser = session.user
+        setUser(sessionUser)
+        // GoTrue dispatches this listener while still holding its internal
+        // auth lock. Any supabase query (getProfileById, isAdmin, …) calls
+        // getSession() under the hood, which would try to re-acquire the
+        // same lock and deadlock. Defer to a fresh task so the lock has
+        // been released by the time these queries run.
+        setTimeout(async () => {
+          if (!mounted) return
+          try {
+            const userProfile = await getProfileById(sessionUser.id)
+            if (userProfile && mounted) {
+              setProfile(userProfile)
+              const adminStatus = await isAdmin(sessionUser.id)
+              if (mounted) setUserIsAdmin(adminStatus)
+            }
+          } catch (err) {
+            console.error('Profile load failed on auth event:', event, err)
+            // The bounded recovery effect will retry.
           }
-        } catch (err) {
-          console.error('Profile load failed on auth event:', event, err)
-          // The bounded recovery effect will retry.
-        }
+        }, 0)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
         setProfile(null)

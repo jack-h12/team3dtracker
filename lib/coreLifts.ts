@@ -209,14 +209,21 @@ export type CompositeScoreRow = {
 //   ((bench_1rm + squat_1rm + deadlift_1rm) * vo2_max) / bodyweight
 // where vo2_max = (max_hr / resting_hr) * 15.3 and max_hr = 220 - age.
 // Only users with all of: birth_date, resting_hr, and a 1RM in each of
-// squat/bench/deadlift are ranked. Each user uses their best 1RM per lift.
+// squat/bench/deadlift are ranked. Each user uses their best 1RM per lift,
+// falling back to an Epley-estimated 1RM from their best 5RM or 10RM if no
+// direct 1RM has been logged for that lift.
 export async function getCompositeScoreLeaderboard(): Promise<CompositeScoreRow[]> {
+  const liftIds = [
+    'squat_1rm', 'squat_5rm', 'squat_10rm',
+    'bench_1rm', 'bench_5rm', 'bench_10rm',
+    'deadlift_1rm', 'deadlift_5rm', 'deadlift_10rm',
+  ]
   const [{ data: profilesData, error: pErr }, { data: subsData, error: sErr }] = await Promise.all([
     supabase.from('lift_profiles').select('user_id, weight_kg, resting_hr, birth_date'),
     supabase
       .from('core_lift_submissions')
       .select('core_lift_id, user_id, value')
-      .in('core_lift_id', ['squat_1rm', 'bench_1rm', 'deadlift_1rm']),
+      .in('core_lift_id', liftIds),
   ])
   if (pErr) throw pErr
   if (sErr) throw sErr
@@ -226,17 +233,32 @@ export async function getCompositeScoreLeaderboard(): Promise<CompositeScoreRow[
   }>
   const subs = (subsData || []) as Array<{ core_lift_id: string; user_id: string; value: number }>
 
-  const bestByUser = new Map<string, { squat?: number; bench?: number; deadlift?: number }>()
+  // Epley: 1RM ≈ w × (1 + reps/30). Used as a fallback when no direct 1RM exists.
+  const estimate1RM = (weight: number, reps: number) => weight * (1 + reps / 30)
+
+  type LiftKey = 'squat' | 'bench' | 'deadlift'
+  type Bests = Partial<Record<LiftKey, { one?: number; five?: number; ten?: number }>>
+  const bestByUser = new Map<string, Bests>()
   for (const s of subs) {
-    const cur = bestByUser.get(s.user_id) || {}
-    const key = s.core_lift_id === 'squat_1rm' ? 'squat'
-      : s.core_lift_id === 'bench_1rm' ? 'bench'
-      : 'deadlift'
-    const prev = (cur as Record<string, number | undefined>)[key]
-    if (prev === undefined || s.value > prev) {
-      ;(cur as Record<string, number>)[key] = s.value
+    const [exercise, variant] = s.core_lift_id.split('_') as [LiftKey, '1rm' | '5rm' | '10rm']
+    const cur: Bests = bestByUser.get(s.user_id) || {}
+    const lift = cur[exercise] || {}
+    const slot = variant === '1rm' ? 'one' : variant === '5rm' ? 'five' : 'ten'
+    if (lift[slot] === undefined || s.value > (lift[slot] as number)) {
+      lift[slot] = s.value
     }
+    cur[exercise] = lift
     bestByUser.set(s.user_id, cur)
+  }
+
+  const effective1RM = (b: Bests, key: LiftKey): number | undefined => {
+    const lift = b[key]
+    if (!lift) return undefined
+    if (lift.one !== undefined) return lift.one
+    const candidates: number[] = []
+    if (lift.five !== undefined) candidates.push(estimate1RM(lift.five, 5))
+    if (lift.ten !== undefined) candidates.push(estimate1RM(lift.ten, 10))
+    return candidates.length ? Math.max(...candidates) : undefined
   }
 
   const rows: Omit<CompositeScoreRow, 'username' | 'display_name' | 'avatar_level'>[] = []
@@ -245,8 +267,12 @@ export async function getCompositeScoreLeaderboard(): Promise<CompositeScoreRow[
     const age = computeAge(p.birth_date)
     if (age === null || age <= 0) continue
     const best = bestByUser.get(p.user_id)
-    if (!best || best.squat === undefined || best.bench === undefined || best.deadlift === undefined) continue
-    const total = best.squat + best.bench + best.deadlift
+    if (!best) continue
+    const squat = effective1RM(best, 'squat')
+    const bench = effective1RM(best, 'bench')
+    const deadlift = effective1RM(best, 'deadlift')
+    if (squat === undefined || bench === undefined || deadlift === undefined) continue
+    const total = squat + bench + deadlift
     const maxHR = computeMaxHR(age)
     const vo2 = computeVO2Max(maxHR, p.resting_hr)
     if (vo2 === null) continue
@@ -256,9 +282,9 @@ export async function getCompositeScoreLeaderboard(): Promise<CompositeScoreRow[
       age,
       bodyweight_kg: p.weight_kg,
       resting_hr: p.resting_hr,
-      squat_1rm_kg: best.squat,
-      bench_1rm_kg: best.bench,
-      deadlift_1rm_kg: best.deadlift,
+      squat_1rm_kg: squat,
+      bench_1rm_kg: bench,
+      deadlift_1rm_kg: deadlift,
       total_kg: total,
       max_hr: maxHR,
       vo2_max: vo2,
