@@ -498,8 +498,22 @@ function LeaderboardDetail({
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {submissions.map((s, i) => {
-            const rank = i + 1
+          {(() => {
+            // Ranks count unique people only — a user's lower entries don't
+            // bump everyone else down. submissions is already sorted by value
+            // desc, so the first occurrence of each user_id is their best.
+            const seen = new Set<string>()
+            let nextRank = 0
+            const rankBySubmission = new Map<string, number>()
+            for (const s of submissions) {
+              if (!seen.has(s.user_id)) {
+                seen.add(s.user_id)
+                nextRank++
+                rankBySubmission.set(s.id, nextRank)
+              }
+            }
+            return submissions.map((s) => {
+            const rank = rankBySubmission.get(s.id) ?? null
             const isCurrentUser = s.user_id === userId
             const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null
             return (
@@ -514,7 +528,7 @@ function LeaderboardDetail({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap' }}>
                   <div style={{ width: '36px', textAlign: 'center', fontSize: medal ? '22px' : '15px', fontWeight: 700, color: medal ? undefined : '#888' }}>
-                    {medal || `#${rank}`}
+                    {medal || (rank !== null ? `#${rank}` : '—')}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ color: isCurrentUser ? '#ff6b35' : '#fff', fontSize: '15px', fontWeight: 700 }}>
@@ -564,7 +578,8 @@ function LeaderboardDetail({
                 )}
               </div>
             )
-          })}
+            })
+          })()}
         </div>
       )}
 

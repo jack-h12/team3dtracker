@@ -19,6 +19,17 @@
 import { supabase } from './supabase'
 import type { Task, Profile } from './supabase'
 
+// Each task is a deterministic 50/50 coin flip for 0 or 20 EXP. Hashing the
+// task UUID (rather than calling Math.random) means toggling the checkbox
+// can't reroll the reward — and uncompleteTask refunds the same amount it
+// granted. UUID hex digits are uniformly distributed, so first-digit parity
+// gives an exact 50/50 split.
+function taskExpReward(taskId: string): 0 | 20 {
+  const firstHex = taskId.replace(/-/g, '')[0] || '0'
+  const n = parseInt(firstHex, 16)
+  return Number.isFinite(n) && n % 2 === 0 ? 20 : 0
+}
+
 // Get 5pm Eastern Time (EST/EDT) in UTC
 // Automatically handles daylight saving time (EST is UTC-5, EDT is UTC-4)
 function getResetTimeToday(): Date {
@@ -356,12 +367,9 @@ export async function completeTask(taskId: string, userId: string, _currentTasks
 
   const newDailyLevel = newTasksCompletedToday
   const goldReward = 10
-  // Each task within the daily cap is a 50/50 coin flip for 0 or 20 EXP
-  // (expected value 10 — same as the old flat reward, just gamified).
-  let expReward = 0
-  for (let i = 0; i < Math.max(0, counterDelta); i++) {
-    if (Math.random() < 0.5) expReward += 20
-  }
+  // 50/50 for 0 or 20 EXP, deterministic per task so toggling can't reroll.
+  // counterDelta is 0 when this completion was beyond the daily cap.
+  const expReward = counterDelta > 0 ? taskExpReward(taskId) : 0
 
   const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
     user_id_param: userId,
@@ -461,7 +469,8 @@ export async function uncompleteTask(taskId: string, userId: string, _currentTas
 
   const newDailyLevel = newTasksCompletedToday
   const goldRefund = 10
-  const expRefund = Math.max(0, counterDelta) * 10
+  // Refund the same amount this task originally granted (deterministic).
+  const expRefund = counterDelta > 0 ? taskExpReward(taskId) : 0
   const newGold = Math.max(0, typedProfile.gold - goldRefund)
   const newExp = Math.max(0, typedProfile.lifetime_exp - expRefund)
 
