@@ -356,7 +356,12 @@ export async function completeTask(taskId: string, userId: string, _currentTasks
 
   const newDailyLevel = newTasksCompletedToday
   const goldReward = 10
-  const expReward = Math.max(0, counterDelta) * 10
+  // Each task within the daily cap is a 50/50 coin flip for 0 or 20 EXP
+  // (expected value 10 — same as the old flat reward, just gamified).
+  let expReward = 0
+  for (let i = 0; i < Math.max(0, counterDelta); i++) {
+    if (Math.random() < 0.5) expReward += 20
+  }
 
   const { error: updateError } = await (supabase.rpc as any)('update_user_gold_and_exp', {
     user_id_param: userId,
