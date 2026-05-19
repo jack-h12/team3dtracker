@@ -128,6 +128,19 @@ export async function getWeeklyLeaderboardForEndSunday(endSunday: string): Promi
   return enriched.map((e, i) => ({ ...e, rank: i + 1 }))
 }
 
+// Returns YYYY-MM-DD strings for all dates that have a leaderboard snapshot.
+export async function getLeaderboardSnapshotDates(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('daily_leaderboard_snapshots')
+    .select('snapshot_date')
+
+  if (error) throw error
+
+  const seen = new Set<string>()
+  for (const r of (data || []) as { snapshot_date: string }[]) seen.add(r.snapshot_date)
+  return Array.from(seen)
+}
+
 // Returns YYYY-MM-DD strings for all Sundays that have a leaderboard snapshot.
 export async function getSundaySnapshotDates(): Promise<string[]> {
   const { data, error } = await supabase

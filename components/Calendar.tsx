@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { getAvailableDates, getTaskSnapshot, getLeaderboardSnapshot, getNoteSnapshot, getDatesWithNotes, getSundaySnapshotDates, getWeeklyLeaderboardForEndSunday, isSunday } from '@/lib/calendar'
+import { getAvailableDates, getTaskSnapshot, getLeaderboardSnapshot, getNoteSnapshot, getDatesWithNotes, getSundaySnapshotDates, getLeaderboardSnapshotDates, getWeeklyLeaderboardForEndSunday, isSunday } from '@/lib/calendar'
 import type { WeeklyLeaderboardEntry } from '@/lib/calendar'
 import type { DailyTaskSnapshot, DailyLeaderboardSnapshot, DailyNote } from '@/lib/supabase'
 
@@ -17,6 +17,7 @@ export default function Calendar({ userId }: CalendarProps) {
   const [availableDates, setAvailableDates] = useState<Set<string>>(new Set())
   const [datesWithNotes, setDatesWithNotes] = useState<Set<string>>(new Set())
   const [sundayDates, setSundayDates] = useState<Set<string>>(new Set())
+  const [leaderboardDates, setLeaderboardDates] = useState<Set<string>>(new Set())
   const [weeklyLeaderboard, setWeeklyLeaderboard] = useState<WeeklyLeaderboardEntry[]>([])
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [tasks, setTasks] = useState<DailyTaskSnapshot[]>([])
@@ -31,15 +32,17 @@ export default function Calendar({ userId }: CalendarProps) {
     const load = async () => {
       try {
         setLoading(true)
-        const [dates, noteDates, sundays] = await Promise.all([
+        const [dates, noteDates, sundays, lbDates] = await Promise.all([
           getAvailableDates(userId),
           getDatesWithNotes(userId),
           getSundaySnapshotDates(),
+          getLeaderboardSnapshotDates(),
         ])
         if (!cancelled) {
           setAvailableDates(new Set(dates))
           setDatesWithNotes(new Set(noteDates))
           setSundayDates(new Set(sundays))
+          setLeaderboardDates(new Set(lbDates))
         }
       } catch (err) {
         console.error('Error loading calendar dates:', err)
@@ -181,10 +184,11 @@ export default function Calendar({ userId }: CalendarProps) {
               const hasData = availableDates.has(dateStr)
               const hasNote = datesWithNotes.has(dateStr)
               const hasWeekly = sundayDates.has(dateStr)
-              const isClickable = hasData || hasWeekly
+              const hasLeaderboard = leaderboardDates.has(dateStr)
               const isSelected = selectedDate === dateStr
               const isToday = dateStr === todayStr
               const isFuture = dateStr > todayStr
+              const isClickable = !isFuture
               const isSun = isSunday(dateStr)
 
               const sundayBg = 'linear-gradient(135deg, rgba(124, 111, 255, 0.18) 0%, rgba(80, 60, 200, 0.10) 100%)'
@@ -212,9 +216,9 @@ export default function Calendar({ userId }: CalendarProps) {
                       ? 'linear-gradient(135deg, rgba(255, 107, 53, 0.2) 0%, rgba(255, 69, 0, 0.1) 100%)'
                       : isSun && hasWeekly
                         ? sundayBg
-                        : hasData
-                          ? '#1a1a1a'
-                          : 'transparent',
+                        : isFuture
+                          ? 'transparent'
+                          : '#1a1a1a',
                     color: isFuture ? '#333' : isClickable ? '#fff' : '#555',
                     cursor: isClickable ? 'pointer' : 'default',
                     fontSize: '14px',
@@ -236,7 +240,7 @@ export default function Calendar({ userId }: CalendarProps) {
                         e.currentTarget.style.background = sundayBg
                       } else {
                         e.currentTarget.style.borderColor = '#2a2a2a'
-                        e.currentTarget.style.background = hasData ? '#1a1a1a' : 'transparent'
+                        e.currentTarget.style.background = isFuture ? 'transparent' : '#1a1a1a'
                       }
                     }
                   }}
