@@ -29,15 +29,9 @@ import {
   uncompleteGuestTask,
 } from './guest'
 
-// Each task is a deterministic 50/50 coin flip for 0 or 20 EXP. Hashing the
-// task UUID (rather than calling Math.random) means toggling the checkbox
-// can't reroll the reward — and uncompleteTask refunds the same amount it
-// granted. UUID hex digits are uniformly distributed, so first-digit parity
-// gives an exact 50/50 split.
-function taskExpReward(taskId: string): 0 | 20 {
-  const firstHex = taskId.replace(/-/g, '')[0] || '0'
-  const n = parseInt(firstHex, 16)
-  return Number.isFinite(n) && n % 2 === 0 ? 20 : 0
+// Flat 10 EXP per task completion.
+function taskExpReward(_taskId: string): 10 {
+  return 10
 }
 
 // Get 5pm Eastern Time (EST/EDT) in UTC

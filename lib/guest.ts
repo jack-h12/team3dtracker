@@ -31,7 +31,7 @@ const STORAGE_KEY = 'team3d_guest_state_v1'
 type GuestState = {
   profile: Profile
   tasks: Task[]                  // all tasks across all dates (mirrors `tasks` table)
-  taskExp: Record<string, 0 | 20> // per-task EXP grant, mirrors deterministic reward
+  taskExp: Record<string, number> // per-task EXP grant, mirrors deterministic reward
 }
 
 function nowIso() { return new Date().toISOString() }
@@ -188,12 +188,9 @@ function recountDoneTodayAndFuture(s: GuestState, todayStr: string): number {
   return s.tasks.filter((t) => t.is_done && t.task_date >= todayStr).length
 }
 
-// Mirrors lib/tasks.ts:taskExpReward — same deterministic 50/50 hash so the
-// guest experience matches real-user behavior.
-function taskExpReward(taskId: string): 0 | 20 {
-  const firstHex = taskId.replace(/-/g, '')[0] || '0'
-  const n = parseInt(firstHex, 16)
-  return Number.isFinite(n) && n % 2 === 0 ? 20 : 0
+// Mirrors lib/tasks.ts:taskExpReward — flat 10 EXP per completion.
+function taskExpReward(_taskId: string): 10 {
+  return 10
 }
 
 export function completeGuestTask(taskId: string, todayStr: string): Profile {
@@ -209,7 +206,7 @@ export function completeGuestTask(taskId: string, todayStr: string): Profile {
   const counterDelta = newCounter - oldCounter
 
   const expReward = counterDelta > 0 ? taskExpReward(taskId) : 0
-  s.taskExp[taskId] = expReward as 0 | 20
+  s.taskExp[taskId] = expReward as number
   s.profile = {
     ...s.profile,
     avatar_level: newCounter,
