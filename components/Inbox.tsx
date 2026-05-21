@@ -3,22 +3,37 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getNotifications, getUnreadCount, markAllRead, clearAllNotifications } from '@/lib/notifications'
 import type { AttackNotification } from '@/lib/notifications'
+import {
+  getBankrobNotifications,
+  getBankrobUnreadCount,
+  markAllBankrobRead,
+  clearBankrobNotifications,
+} from '@/lib/bankrob'
+import type { BankrobNotification } from '@/lib/bankrob'
 
 interface InboxProps {
   userId: string
 }
 
+type InboxItem =
+  | { kind: 'attack'; created_at: string; is_read: boolean; data: AttackNotification }
+  | { kind: 'bankrob'; created_at: string; is_read: boolean; data: BankrobNotification }
+
 export default function Inbox({ userId }: InboxProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [notifications, setNotifications] = useState<AttackNotification[]>([])
+  const [bankrobNotifs, setBankrobNotifs] = useState<BankrobNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const loadUnreadCount = useCallback(async () => {
     try {
-      const count = await getUnreadCount(userId)
-      setUnreadCount(count)
+      const [a, b] = await Promise.all([
+        getUnreadCount(userId).catch(() => 0),
+        getBankrobUnreadCount(userId).catch(() => 0),
+      ])
+      setUnreadCount(a + b)
     } catch (err) {
       console.error('Error loading unread count:', err)
     }
@@ -27,14 +42,28 @@ export default function Inbox({ userId }: InboxProps) {
   const loadNotifications = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getNotifications(userId)
-      setNotifications(data)
+      const [a, b] = await Promise.all([
+        getNotifications(userId).catch(() => []),
+        getBankrobNotifications(userId).catch(() => []),
+      ])
+      setNotifications(a)
+      setBankrobNotifs(b)
     } catch (err) {
       console.error('Error loading notifications:', err)
     } finally {
       setLoading(false)
     }
   }, [userId])
+
+  const items: InboxItem[] = [
+    ...notifications.map((n) => ({ kind: 'attack' as const, created_at: n.created_at, is_read: n.is_read, data: n })),
+    ...bankrobNotifs
+      // Hide invite_received (BankrobPanel shows those with action buttons)
+      // and the planner's own result notifications — the planner already sees
+      // their result via the BankrobAnimation and the Recent Results section.
+      .filter((n) => n.kind !== 'invite_received' && n.kind !== 'planner_won' && n.kind !== 'planner_lost')
+      .map((n) => ({ kind: 'bankrob' as const, created_at: n.created_at, is_read: n.is_read, data: n })),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
   // Poll unread count every 30 seconds
   useEffect(() => {
@@ -69,9 +98,10 @@ export default function Inbox({ userId }: InboxProps) {
 
   const handleMarkAllRead = async () => {
     try {
-      await markAllRead(userId)
+      await Promise.all([markAllRead(userId).catch(() => null), markAllBankrobRead(userId).catch(() => null)])
       setUnreadCount(0)
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+      setBankrobNotifs((prev) => prev.map((n) => ({ ...n, is_read: true })))
     } catch (err) {
       console.error('Error marking all read:', err)
     }
@@ -79,8 +109,12 @@ export default function Inbox({ userId }: InboxProps) {
 
   const handleClearAll = async () => {
     try {
-      await clearAllNotifications(userId)
+      await Promise.all([
+        clearAllNotifications(userId).catch(() => null),
+        clearBankrobNotifications(userId).catch(() => null),
+      ])
       setNotifications([])
+      setBankrobNotifs([])
       setUnreadCount(0)
     } catch (err) {
       console.error('Error clearing notifications:', err)
@@ -200,7 +234,7 @@ export default function Inbox({ userId }: InboxProps) {
               fontSize: '15px',
               color: '#fff',
               letterSpacing: '-0.3px',
-            }}>ATTACK LOG</span>
+            }}>INBOX</span>
             <div style={{ display: 'flex', gap: '8px' }}>
               {unreadCount > 0 && (
                 <button
@@ -219,7 +253,7 @@ export default function Inbox({ userId }: InboxProps) {
                   Mark all read
                 </button>
               )}
-              {notifications.length > 0 && (
+              {items.length > 0 && (
                 <button
                   onClick={handleClearAll}
                   style={{
@@ -245,7 +279,7 @@ export default function Inbox({ userId }: InboxProps) {
             flex: 1,
             maxHeight: '360px',
           }}>
-            {loading && notifications.length === 0 ? (
+            {loading && items.length === 0 ? (
               <div style={{
                 padding: '40px 20px',
                 textAlign: 'center',
@@ -254,93 +288,108 @@ export default function Inbox({ userId }: InboxProps) {
               }}>
                 Loading...
               </div>
-            ) : notifications.length === 0 ? (
+            ) : items.length === 0 ? (
               <div style={{
                 padding: '40px 20px',
                 textAlign: 'center',
               }}>
-                <div style={{ fontSize: '40px', marginBottom: '12px' }}>&#9876;&#65039;</div>
+                <div style={{ fontSize: '40px', marginBottom: '12px' }}>&#128238;</div>
                 <p style={{ color: '#888', fontSize: '14px', fontWeight: 500 }}>
-                  No attacks yet. You're safe... for now.
+                  Nothing here yet.
                 </p>
               </div>
             ) : (
-              notifications.map((notif) => (
-                <div
-                  key={notif.id}
-                  style={{
-                    padding: '14px 16px',
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-                    background: notif.is_read ? 'transparent' : 'rgba(255, 68, 68, 0.05)',
-                    transition: 'background 0.2s ease',
-                  }}
-                >
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '12px',
-                  }}>
-                    <div style={{
-                      fontSize: '24px',
-                      flexShrink: 0,
-                      lineHeight: 1,
-                      marginTop: '2px',
-                    }}>
-                      {notif.damage_dealt > 0 ? '\u2694\uFE0F' : '\uD83D\uDEE1\uFE0F'}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: '13px',
-                        color: '#fff',
-                        fontWeight: notif.is_read ? 500 : 700,
-                        lineHeight: 1.4,
-                        marginBottom: '4px',
-                      }}>
-                        <span style={{ color: '#ff6b35', fontWeight: 800 }}>
-                          {notif.attacker_username}
-                        </span>
-                        {' attacked you with '}
-                        <span style={{ color: '#ff4444', fontWeight: 700 }}>
-                          {notif.weapon_name}
-                        </span>
+              items.map((item) => {
+                if (item.kind === 'attack') {
+                  const notif = item.data
+                  return (
+                    <div
+                      key={`a-${notif.id}`}
+                      style={{
+                        padding: '14px 16px',
+                        borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                        background: notif.is_read ? 'transparent' : 'rgba(255, 68, 68, 0.05)',
+                        transition: 'background 0.2s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                        <div style={{ fontSize: '24px', flexShrink: 0, lineHeight: 1, marginTop: '2px' }}>
+                          {notif.damage_dealt > 0 ? '\u2694\uFE0F' : '\uD83D\uDEE1\uFE0F'}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#fff',
+                            fontWeight: notif.is_read ? 500 : 700,
+                            lineHeight: 1.4,
+                            marginBottom: '4px',
+                          }}>
+                            <span style={{ color: '#ff6b35', fontWeight: 800 }}>{notif.attacker_username}</span>
+                            {' attacked you with '}
+                            <span style={{ color: '#ff4444', fontWeight: 700 }}>{notif.weapon_name}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 800, color: notif.damage_dealt > 0 ? '#ff4444' : '#4caf50' }}>
+                              {notif.damage_dealt > 0 ? `-${notif.damage_dealt} EXP` : 'Blocked!'}
+                            </span>
+                            <span style={{ fontSize: '11px', color: '#666', fontWeight: 500, flexShrink: 0 }}>
+                              {formatTime(notif.created_at)}
+                            </span>
+                          </div>
+                        </div>
+                        {!notif.is_read && (
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ff6b35', flexShrink: 0, marginTop: '6px' }} />
+                        )}
                       </div>
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                      }}>
-                        <span style={{
+                    </div>
+                  )
+                }
+
+                // bankrob result row
+                const n = item.data
+                const positive = n.gold_delta > 0
+                const negative = n.gold_delta < 0
+                const icon = n.kind === 'heist_won' || n.kind === 'heist_lost' ? '\uD83C\uDFAD' : '\uD83D\uDCB0'
+                const accent = positive ? '#4caf50' : negative ? '#ff4444' : '#9b59b6'
+                return (
+                  <div
+                    key={`b-${n.id}`}
+                    style={{
+                      padding: '14px 16px',
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                      background: n.is_read ? 'transparent' : 'rgba(155, 89, 182, 0.06)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                      <div style={{ fontSize: '24px', flexShrink: 0, lineHeight: 1, marginTop: '2px' }}>{icon}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
                           fontSize: '13px',
-                          fontWeight: 800,
-                          color: notif.damage_dealt > 0 ? '#ff4444' : '#4caf50',
+                          color: '#fff',
+                          fontWeight: n.is_read ? 500 : 700,
+                          lineHeight: 1.4,
+                          marginBottom: '4px',
                         }}>
-                          {notif.damage_dealt > 0
-                            ? `-${notif.damage_dealt} EXP`
-                            : 'Blocked!'}
-                        </span>
-                        <span style={{
-                          fontSize: '11px',
-                          color: '#666',
-                          fontWeight: 500,
-                          flexShrink: 0,
-                        }}>
-                          {formatTime(notif.created_at)}
-                        </span>
+                          {n.message}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          {n.gold_delta !== 0 ? (
+                            <span style={{ fontSize: '13px', fontWeight: 800, color: accent }}>
+                              {positive ? '+' : ''}{n.gold_delta}g
+                            </span>
+                          ) : <span />}
+                          <span style={{ fontSize: '11px', color: '#666', fontWeight: 500, flexShrink: 0 }}>
+                            {formatTime(n.created_at)}
+                          </span>
+                        </div>
                       </div>
+                      {!n.is_read && (
+                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#9b59b6', flexShrink: 0, marginTop: '6px' }} />
+                      )}
                     </div>
-                    {!notif.is_read && (
-                      <div style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        background: '#ff6b35',
-                        flexShrink: 0,
-                        marginTop: '6px',
-                      }} />
-                    )}
                   </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>

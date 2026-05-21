@@ -67,6 +67,8 @@ export function getItemImage(item: { type: string; name: string; cost?: number }
     return '📜'
   } else if (item.type === 'display_name_restore') {
     return '✨'
+  } else if (item.type === 'bankrob') {
+    return '/bankrob-img.jpg'
   }
   return '📦'
 }

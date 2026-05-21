@@ -26,6 +26,7 @@ import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage, getItemImage } from '@/lib/utils'
 import AttackAnimation from '@/components/AttackAnimation'
+import BankrobPanel from '@/components/BankrobPanel'
 import type { ShopItem, UserInventory, Profile } from '@/lib/supabase'
 
 interface ShopProps {
@@ -43,6 +44,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
   const [loading, setLoading] = useState(false)
   const [showAttackAnimation, setShowAttackAnimation] = useState(false)
   const [attackTarget, setAttackTarget] = useState<{ avatar: string; name: string; sword: string } | null>(null)
+  const [expandedDescs, setExpandedDescs] = useState<Record<string, boolean>>({})
   const isLoadingRef = useRef(false)
   const mountedRef = useRef(true)
   const hasInitialDataRef = useRef(false)
@@ -260,6 +262,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       case 'name_change': return '📜'
       case 'name_restore': return '📜'
       case 'display_name_restore': return '✨'
+      case 'bankrob': return '🎭'
       default: return '📦'
     }
   }, [])
@@ -271,12 +274,20 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       case 'armour': return { bg: 'linear-gradient(135deg, #1a3a5a 0%, #0f1f2e 100%)', border: '#4a9eff', glow: 'rgba(74, 158, 255, 0.4)' }
       case 'potion': return { bg: 'linear-gradient(135deg, #2d5a27 0%, #1a3316 100%)', border: '#4caf50', glow: 'rgba(76, 175, 80, 0.4)' }
       case 'pet': return { bg: 'linear-gradient(135deg, #5a3a1a 0%, #3d2811 100%)', border: '#d4a574', glow: 'rgba(212, 165, 116, 0.4)' }
+      case 'bankrob': return { bg: 'linear-gradient(135deg, #2d1a4a 0%, #1a0f2e 100%)', border: '#9b59b6', glow: 'rgba(155, 89, 182, 0.4)' }
       default: return { bg: 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)', border: '#3a3a3a', glow: 'rgba(0, 0, 0, 0.2)' }
     }
   }, [])
 
+  const bankrobInv = useMemo(() => inventory.find((inv) => inv.item.type === 'bankrob') || null, [inventory])
+
   return (
     <div>
+      <BankrobPanel
+        userId={userId}
+        bankrobInventory={bankrobInv}
+        onChange={() => { loadData(true); onPurchase() }}
+      />
       <div style={{ marginBottom: '30px' }}>
         <h2 style={{
           fontSize: 'clamp(24px, 5vw, 32px)',
@@ -363,15 +374,15 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                     display: 'flex',
                     justifyContent: 'center',
                     alignItems: 'center',
-                    height: item.type === 'pet' ? '120px' : '80px'
+                    height: (item.type === 'pet' || item.type === 'bankrob') ? '160px' : '80px'
                   }}>
-                    {(item.type === 'weapon' || item.type === 'armour' || item.type === 'pet') ? (
+                    {(item.type === 'weapon' || item.type === 'armour' || item.type === 'pet' || item.type === 'bankrob') ? (
                       <img
                         src={getItemImage(item)}
                         alt={item.name}
                         style={{
-                          maxWidth: item.type === 'pet' ? '120px' : '80px',
-                          maxHeight: item.type === 'pet' ? '120px' : '80px',
+                          maxWidth: (item.type === 'pet' || item.type === 'bankrob') ? '160px' : '80px',
+                          maxHeight: (item.type === 'pet' || item.type === 'bankrob') ? '160px' : '80px',
                           objectFit: 'contain',
                           filter: 'drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5))'
                         }}
@@ -426,9 +437,38 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                       marginBottom: '8px'
                     }}>
                       <span>EFFECT</span>
-                      <span style={{ color: '#fff', textAlign: 'right', maxWidth: '60%' }}>
-                        {getEffectDescription(item.effect)}
-                      </span>
+                      {(() => {
+                        const full = getEffectDescription(item.effect)
+                        const LIMIT = 60
+                        const isLong = full.length > LIMIT
+                        const expanded = !!expandedDescs[item.id]
+                        const shown = !isLong || expanded ? full : full.slice(0, LIMIT).trimEnd() + '…'
+                        return (
+                          <span style={{ color: '#fff', textAlign: 'right', maxWidth: '60%' }}>
+                            {shown}
+                            {isLong && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setExpandedDescs((prev) => ({ ...prev, [item.id]: !expanded }))
+                                }}
+                                style={{
+                                  marginLeft: 6,
+                                  background: 'none',
+                                  border: 'none',
+                                  color: '#9b59b6',
+                                  cursor: 'pointer',
+                                  fontWeight: 700,
+                                  fontSize: 11,
+                                  padding: 0,
+                                }}
+                              >
+                                {expanded ? 'less' : 'more'}
+                              </button>
+                            )}
+                          </span>
+                        )
+                      })()}
                     </div>
                     {item.type === 'armour' && (
                       <>
@@ -544,9 +584,9 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
             borderRadius: '12px',
             fontSize: '14px',
             fontWeight: 600
-          }}>{inventory.length}</span>
+          }}>{inventory.filter((inv) => inv.item.type !== 'bankrob').length}</span>
         </h3>
-        {inventory.length === 0 ? (
+        {inventory.filter((inv) => inv.item.type !== 'bankrob').length === 0 ? (
           <div style={{
             padding: '60px 40px',
             background: '#0a0a0a',
@@ -561,7 +601,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            {inventory.map((inv) => {
+            {inventory.filter((inv) => inv.item.type !== 'bankrob').map((inv) => {
               const typeColors = getItemTypeColor(inv.item.type)
               return (
                 <div
@@ -597,13 +637,13 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                     minWidth: 0,
                     width: '100%'
                   }}>
-                    {(inv.item.type === 'weapon' || inv.item.type === 'armour' || inv.item.type === 'pet') ? (
+                    {(inv.item.type === 'weapon' || inv.item.type === 'armour' || inv.item.type === 'pet' || inv.item.type === 'bankrob') ? (
                       <img
                         src={getItemImage(inv.item)}
                         alt={inv.item.name}
                         style={{
-                          width: inv.item.type === 'pet' ? '90px' : '60px',
-                          height: inv.item.type === 'pet' ? '90px' : '60px',
+                          width: (inv.item.type === 'pet' || inv.item.type === 'bankrob') ? '90px' : '60px',
+                          height: (inv.item.type === 'pet' || inv.item.type === 'bankrob') ? '90px' : '60px',
                           objectFit: 'contain',
                           filter: 'drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5))'
                         }}
