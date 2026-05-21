@@ -110,10 +110,10 @@ export default function HowToPlay() {
               <strong style={{ color: '#fff', fontWeight: 700 }}>⚔️ WEAPONS</strong> - Attack other players to reduce their lifetime EXP. Damage: Wooden Sword (30), Iron Sword (120), Diamond Sword (250)
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>🛡️ ARMOUR</strong> - Protects you from attacks. Protection: Leather (15 PROT.), Iron (60 PROT.), Diamond (125 PROT.). Only the highest protection armour counts - doesn't stack! <strong style={{ color: '#ff4444', fontWeight: 700 }}>Armour expires after 2 weeks</strong> - hover over armour to see time remaining!
+              <strong style={{ color: '#fff', fontWeight: 700 }}>🛡️ ARMOUR</strong> - Protects you from attacks (not heists). Protection: Leather (15 PROT.), Iron (60 PROT.), Diamond (125 PROT.). Only the highest protection armour counts - doesn't stack! <strong style={{ color: '#ff4444', fontWeight: 700 }}>Armour expires after 2 weeks</strong> - hover over armour to see time remaining!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>🧪 POTIONS</strong> - Give you temporary immunity from attacks (24h or 48h)
+              <strong style={{ color: '#fff', fontWeight: 700 }}>🧪 POTIONS</strong> - Give you temporary immunity from attacks AND heists (Immunity Potion: 24h, Super Potion: 5 days)
             </p>
             <p style={{ margin: 0 }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>📜 NAME CHANGE SCROLL</strong> - Change someone else's displayed username
@@ -250,7 +250,7 @@ export default function HowToPlay() {
               <strong style={{ color: '#fff', fontWeight: 700 }}>3. Check expiration dates</strong> - Hover over armour and potion icons to see how much time remains before they expire
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
-              <strong style={{ color: '#fff', fontWeight: 700 }}>4. Use potions strategically</strong> - Activate immunity before big battles. Potions last 24h or 48h!
+              <strong style={{ color: '#fff', fontWeight: 700 }}>4. Use potions strategically</strong> - Activate immunity before big battles or heists. Immunity Potion lasts 24h, Super Potion lasts 5 days!
             </p>
             <p style={{ margin: '0 0 12px 0' }}>
               <strong style={{ color: '#fff', fontWeight: 700 }}>5. Check leaderboards daily</strong> - See who's climbing the ranks

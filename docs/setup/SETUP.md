@@ -120,8 +120,8 @@ INSERT INTO shop_items (name, type, cost, effect) VALUES
   ('Iron Sword', 'weapon', 150, 'Reduces target EXP by 25'),
   ('Iron Armour', 'armour', 100, 'Protects from attacks'),
   ('Steel Armour', 'armour', 250, 'Strong protection from attacks'),
-  ('Health Potion', 'potion', 75, '24h immunity from attacks'),
-  ('Super Potion', 'potion', 200, '48h immunity from attacks'),
+  ('Immunity Potion', 'potion', 150, '24h immunity from attacks and heists'),
+  ('Super Potion', 'potion', 500, '5 day immunity from attacks and heists'),
   ('Cool Hat', 'clothes', 25, 'Cosmetic item'),
   ('Epic Cape', 'clothes', 100, 'Fancy cosmetic item');
 ```

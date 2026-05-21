@@ -191,7 +191,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
         setAttackTarget(null)
       }
     } else if (itemType === 'potion') {
-      const confirmed = await showConfirm('Use Potion', 'Use this potion? You will gain 24h immunity!')
+      const confirmed = await showConfirm('Use Potion', 'Use this potion? You will gain immunity from attacks and heists!')
       if (!confirmed) return
     } else if (itemType === 'name_change') {
       if (!selectedTarget) {

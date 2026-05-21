@@ -284,10 +284,10 @@ export async function useItem(userId: string, inventoryId: string, targetUserId?
   } else if (typedItem.type === 'potion') {
     // Potion gives immunity - set expiration time
     const potionName = typedItem.name.toLowerCase()
-    let hours = 24 // Default for Health Potion
-    
+    let hours = 24 // Default for Immunity Potion (24h)
+
     if (potionName.includes('super')) {
-      hours = 48 // Super Potion
+      hours = 120 // Super Potion: 5 days
     }
     
     const expirationTime = new Date()
