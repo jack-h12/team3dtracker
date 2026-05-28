@@ -405,6 +405,10 @@ export default function Leaderboard() {
                       }}
                       onMouseEnter={() => setHoveredPotionUserId(selectedUser.id)}
                       onMouseLeave={() => setHoveredPotionUserId(null)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setHoveredPotionUserId(prev => prev === selectedUser.id ? null : selectedUser.id)
+                      }}
                     >
                       <div
                         style={{
@@ -547,6 +551,10 @@ export default function Leaderboard() {
                       }}
                       onMouseEnter={() => setHoveredArmourUserId(selectedUser.id)}
                       onMouseLeave={() => setHoveredArmourUserId(null)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setHoveredArmourUserId(prev => prev === selectedUser.id ? null : selectedUser.id)
+                      }}
                     >
                       <img
                         src={getItemImage(topArmor.item)}
@@ -854,7 +862,7 @@ export default function Leaderboard() {
                         ? '0 8px 30px rgba(255, 107, 53, 0.3)'
                         : '0 4px 15px rgba(0, 0, 0, 0.2)',
                       gap: 'clamp(8px, 2vw, 20px)',
-                      overflow: 'hidden',
+                      overflow: 'visible',
                       width: '100%',
                       boxSizing: 'border-box'
                     }}
@@ -903,6 +911,10 @@ export default function Leaderboard() {
                             }}
                             onMouseEnter={() => setHoveredPotionUserId(user.id)}
                             onMouseLeave={() => setHoveredPotionUserId(null)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setHoveredPotionUserId(prev => prev === user.id ? null : user.id)
+                            }}
                           >
                             <div
                               style={{
@@ -1004,6 +1016,11 @@ export default function Leaderboard() {
                               loadUserInventoryOnHover(user.id)
                             }}
                             onMouseLeave={() => setHoveredArmourUserId(null)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              loadUserInventoryOnHover(user.id)
+                              setHoveredArmourUserId(prev => prev === user.id ? null : user.id)
+                            }}
                           >
                             <img
                               src={getItemImage(topArmor.item)}
