@@ -17,7 +17,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getTodayTasks, getTasksForDate, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, shouldResetAvatar, updateTaskOrder, getCurrentTaskDate, addDays, copyTasksFromDate, getAvailableSourceDates, getTaskPreviewForDate } from '@/lib/tasks'
+import { getTodayTasks, getTasksForDate, addTask, completeTask, uncompleteTask, deleteTask, updateTask, shouldResetTasks, shouldResetAvatar, updateTaskOrder, getCurrentTaskDate, addDays, copyTasksFromDate, getAvailableSourceDates, getTaskPreviewForDate, getSnapshotTasksForDate, completeSnapshotTask, uncompleteSnapshotTask } from '@/lib/tasks'
 import { showModal } from '@/lib/modal'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { supabase } from '@/lib/supabase'
@@ -29,6 +29,19 @@ interface TasksProps {
   onTaskComplete: (updatedProfile?: Profile) => void
 }
 
+// The 5M framework is a presentation layer over the same 10 task slots:
+// 5 categories of 2 slots each. Slot N of the flat task list maps to
+// category Math.floor(N / TASKS_PER_CATEGORY), so all XP/gold/leaderboard
+// logic stays identical — only the layout changes.
+const TASKS_PER_CATEGORY = 2
+const FIVE_M_CATEGORIES = [
+  { key: 'motivation', label: 'Motivation', emoji: '🦁' },
+  { key: 'muscle', label: 'Muscle', emoji: '💪' },
+  { key: 'money', label: 'Money', emoji: '💰' },
+  { key: 'mind', label: 'Mind', emoji: '🧠' },
+  { key: 'mood', label: 'Mood', emoji: '😊' },
+] as const
+
 // ============================================================================
 // STATE SETUP
 // ============================================================================
@@ -39,6 +52,16 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   const [newTask, setNewTask] = useState('')
   const [newReward, setNewReward] = useState('')
 
+  // View mode: flat 10-task list, or the 5M framework grid. Persisted per user.
+  const [viewMode, setViewMode] = useState<'list' | 'fivem'>('list')
+  // Which 5M slot (0-9) currently has its inline add form open, if any.
+  const [activeAddSlot, setActiveAddSlot] = useState<number | null>(null)
+  const changeViewMode = (mode: 'list' | 'fivem') => {
+    setViewMode(mode)
+    setActiveAddSlot(null)
+    try { localStorage.setItem(`taskViewMode_${userId}`, mode) } catch {}
+  }
+
   // Date navigation: today → today+7 inclusive
   const todayDate = getCurrentTaskDate()
   const [selectedDate, setSelectedDate] = useState<string>(todayDate)
@@ -46,8 +69,9 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   const dayOffset = Math.round(
     (new Date(selectedDate + 'T00:00:00Z').getTime() - new Date(todayDate + 'T00:00:00Z').getTime()) / 86400000
   )
-  const canGoPrev = dayOffset > 0
+  const canGoPrev = dayOffset > -7
   const canGoNext = dayOffset < 7
+  const isPastDay = dayOffset < 0
   
   // Loading states
   // - `loading`: Controls UI loading indicator and disables interactive elements
@@ -189,10 +213,15 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         }
       }
 
-      // Fetch tasks with retry and timeout handling
+      // Fetch tasks with retry and timeout handling.
+      // Past days live in daily_task_snapshots (the cron deletes them from
+      // `tasks` at the 5pm reset); today and future days live in `tasks`.
       const dateToLoad = selectedDate
+      const loadPast = dateToLoad < todayDate
       const taskList = await withRetry(
-        ({ signal }) => getTasksForDate(userId, dateToLoad, signal),
+        ({ signal }) => loadPast
+          ? getSnapshotTasksForDate(userId, dateToLoad, signal)
+          : getTasksForDate(userId, dateToLoad, signal),
         { maxRetries: 3, timeout: 15000 }
       );
 
@@ -213,8 +242,11 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       if (mountedRef.current) {
         try {
           await supabase.auth.refreshSession();
+          const retryLoadPast = selectedDate < todayDate
           const taskList = await withRetry(
-            ({ signal }) => getTasksForDate(userId, selectedDate, signal),
+            ({ signal }) => retryLoadPast
+              ? getSnapshotTasksForDate(userId, selectedDate, signal)
+              : getTasksForDate(userId, selectedDate, signal),
             { maxRetries: 1, timeout: 10000 }
           );
           if (mountedRef.current) {
@@ -342,6 +374,14 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]) // loadTasks and checkReset are stable - they use refs for state management
 
+  // Restore the saved view mode (10-task list vs 5M framework) on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`taskViewMode_${userId}`)
+      if (stored === 'fivem' || stored === 'list') setViewMode(stored)
+    } catch {}
+  }, [userId])
+
   // Reload tasks when the user picks a different day
   useEffect(() => {
     if (!mountedRef.current) return
@@ -401,6 +441,26 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       setTasks([...tasks, task])
       setNewTask('')
       setNewReward('')
+    } catch (err: any) {
+      await showModal('Error', err.message || 'Failed to add task', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Adds a task into a specific 5M slot (0-9) regardless of fill order, so any
+  // category can be populated independently. Keeps tasks sorted by slot.
+  const handleAddTaskToSlot = async (slotIndex: number, e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newTask.trim() || tasks.length >= 10 || isPastDay) return
+
+    setLoading(true)
+    try {
+      const task = await addTask(userId, newTask.trim(), newReward.trim() || null, selectedDate, slotIndex)
+      setTasks([...tasks, task].sort((a, b) => a.task_order - b.task_order))
+      setNewTask('')
+      setNewReward('')
+      setActiveAddSlot(null)
     } catch (err: any) {
       await showModal('Error', err.message || 'Failed to add task', 'error')
     } finally {
@@ -468,8 +528,9 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
 
     setLoading(true)
     try {
-      // Pass current tasks to avoid re-fetching
-      const updatedProfile = await completeTask(taskId, userId, tasks)
+      const updatedProfile = isPastDay
+        ? await completeSnapshotTask(taskId, userId)
+        : await completeTask(taskId, userId, tasks)
 
       // Pass updated profile to parent to avoid re-fetching
       if (onTaskComplete) {
@@ -495,7 +556,9 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
 
     setLoading(true)
     try {
-      const updatedProfile = await uncompleteTask(taskId, userId, tasks)
+      const updatedProfile = isPastDay
+        ? await uncompleteSnapshotTask(taskId, userId)
+        : await uncompleteTask(taskId, userId, tasks)
       if (onTaskComplete) {
         onTaskComplete(updatedProfile)
       }
@@ -640,7 +703,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   // STYLE HELPERS
   // ============================================================================
 
-  const getTaskItemStyle = (task: Task) => ({
+  const getTaskItemStyle = (task: Task, draggable: boolean = true) => ({
     display: 'flex',
     alignItems: 'center',
     padding: 'clamp(14px, 3vw, 18px) clamp(15px, 3vw, 20px)',
@@ -665,13 +728,486 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
       : dragOverTaskId === task.id
       ? '0 4px 20px rgba(255, 107, 53, 0.4)'
       : 'none',
-    cursor: task.is_done || loading ? 'default' : 'grab',
+    cursor: !draggable || task.is_done || loading ? 'default' : 'grab',
     opacity: draggedTaskId === task.id ? 0.5 : 1,
     transform: draggedTaskId === task.id ? 'scale(0.98)' : 'scale(1)'
   })
 
   const isMaxTasks = tasks.length >= 10
-  const canAddTask = !isMaxTasks && !loading && newTask.trim()
+  const canAddTask = !isMaxTasks && !loading && !isPastDay && newTask.trim()
+
+  // ============================================================================
+  // ROW RENDERING (shared by the flat list and the 5M framework grid)
+  // ============================================================================
+
+  // Renders a single task row. `draggable` is only enabled in the flat list —
+  // the 5M grid pins tasks to fixed category slots, so reordering is disabled.
+  const renderTaskRow = (task: Task, draggable: boolean) => {
+    const canDrag = draggable && !task.is_done && !loading && !isPastDay
+    return (
+      <div
+        key={task.id}
+        draggable={canDrag}
+        onDragStart={canDrag ? (e) => handleDragStart(e, task.id) : undefined}
+        onDragOver={draggable ? (e) => handleDragOver(e, task.id) : undefined}
+        onDragLeave={draggable ? handleDragLeave : undefined}
+        onDrop={draggable ? (e) => handleDrop(e, task.id) : undefined}
+        onDragEnd={draggable ? handleDragEnd : undefined}
+        style={getTaskItemStyle(task, draggable)}
+      >
+        {/* Drag Handle */}
+        {draggable && !task.is_done && !isPastDay && (
+          <div
+            style={{
+              marginRight: '8px',
+              color: '#666',
+              fontSize: '16px',
+              cursor: 'grab',
+              userSelect: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '4px',
+              lineHeight: '1'
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <span style={{
+              display: 'inline-block',
+              transform: 'rotate(90deg)',
+              letterSpacing: '2px'
+            }}>⋮⋮</span>
+          </div>
+        )}
+        <input
+          type="checkbox"
+          checked={task.is_done}
+          onChange={() => task.is_done ? handleUncompleteTask(task.id) : handleCompleteTask(task.id)}
+          disabled={loading}
+          title={!isToday ? "Counts toward today's level (capped at 10)" : undefined}
+          style={{
+            marginRight: '16px',
+            width: '24px',
+            height: '24px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            accentColor: '#ff6b35',
+            flexShrink: 0
+          }}
+        />
+        {editingTaskId === task.id ? (
+          /* Editing mode */
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <input
+              type="text"
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveEdit(task.id)
+                if (e.key === 'Escape') cancelEditing()
+              }}
+              autoFocus
+              style={{
+                padding: '8px 12px',
+                background: '#0a0a0a',
+                border: '1px solid #ff6b35',
+                borderRadius: '8px',
+                color: '#fff',
+                fontSize: '15px',
+                fontWeight: 500,
+                outline: 'none',
+                boxShadow: '0 0 0 3px rgba(255, 107, 53, 0.1)'
+              }}
+            />
+            <input
+              type="text"
+              value={editReward}
+              onChange={(e) => setEditReward(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveEdit(task.id)
+                if (e.key === 'Escape') cancelEditing()
+              }}
+              placeholder="Reward (optional)"
+              style={{
+                padding: '6px 12px',
+                background: '#0a0a0a',
+                border: '1px solid #3a3a3a',
+                borderRadius: '8px',
+                color: '#ffd700',
+                fontSize: '13px',
+                fontWeight: 500,
+                outline: 'none'
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = '#ffd700'
+                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(255, 215, 0, 0.1)'
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = '#3a3a3a'
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+            />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => handleSaveEdit(task.id)}
+                disabled={!editDescription.trim()}
+                style={{
+                  padding: '6px 14px',
+                  background: editDescription.trim()
+                    ? 'linear-gradient(135deg, #4caf50 0%, #388e3c 100%)'
+                    : '#2a2a2a',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: editDescription.trim() ? 'pointer' : 'not-allowed',
+                  fontWeight: 700,
+                  fontSize: '12px',
+                  transition: 'all 0.3s ease'
+                }}
+              >
+                SAVE
+              </button>
+              <button
+                onClick={cancelEditing}
+                style={{
+                  padding: '6px 14px',
+                  background: 'rgba(255, 255, 255, 0.1)',
+                  color: '#888',
+                  border: '1px solid #3a3a3a',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  fontSize: '12px',
+                  transition: 'all 0.3s ease'
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Display mode */
+          <>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span
+                style={{
+                  textDecoration: task.is_done ? 'line-through' : 'none',
+                  opacity: task.is_done ? 0.5 : 1,
+                  color: task.is_done ? '#888' : '#fff',
+                  fontSize: '15px',
+                  fontWeight: task.is_done ? 500 : 600
+                }}
+              >
+                {task.description}
+              </span>
+              {task.reward && (
+                <span
+                  style={{
+                    fontSize: '13px',
+                    color: task.is_done ? '#888' : '#ffd700',
+                    fontWeight: 600,
+                    fontStyle: 'italic',
+                    opacity: task.is_done ? 0.5 : 1
+                  }}
+                >
+                  🎁 Reward: {task.reward}
+                </span>
+              )}
+            </div>
+            {!task.is_done && !isPastDay && (
+              <button
+                onClick={() => startEditing(task)}
+                disabled={loading}
+                style={{
+                  padding: '8px 16px',
+                  background: 'rgba(255, 107, 53, 0.1)',
+                  color: '#ff6b35',
+                  border: '1px solid rgba(255, 107, 53, 0.3)',
+                  borderRadius: '8px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) {
+                    e.currentTarget.style.background = 'rgba(255, 107, 53, 0.2)'
+                    e.currentTarget.style.borderColor = '#ff6b35'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!loading) {
+                    e.currentTarget.style.background = 'rgba(255, 107, 53, 0.1)'
+                    e.currentTarget.style.borderColor = 'rgba(255, 107, 53, 0.3)'
+                  }
+                }}
+              >
+                EDIT
+              </button>
+            )}
+            {!isPastDay && (
+              <button
+                onClick={() => handleDeleteTask(task.id)}
+                disabled={loading}
+                style={{
+                  padding: '8px 16px',
+                  background: 'rgba(255, 68, 68, 0.1)',
+                  color: '#ff4444',
+                  border: '1px solid rgba(255, 68, 68, 0.3)',
+                  borderRadius: '8px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) {
+                    e.currentTarget.style.background = 'rgba(255, 68, 68, 0.2)'
+                    e.currentTarget.style.borderColor = '#ff4444'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!loading) {
+                    e.currentTarget.style.background = 'rgba(255, 68, 68, 0.1)'
+                    e.currentTarget.style.borderColor = 'rgba(255, 68, 68, 0.3)'
+                  }
+                }}
+              >
+                DELETE
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // Compact inline "add task" form for a specific 5M slot. Submitting places
+  // the task in exactly that slot via handleAddTaskToSlot, so categories can be
+  // filled in any order.
+  const renderInlineAdd = (slotIndex: number, categoryLabel: string) => (
+    <form
+      key={`inline-add-${slotIndex}`}
+      onSubmit={(e) => handleAddTaskToSlot(slotIndex, e)}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        padding: 'clamp(12px, 3vw, 16px)',
+        background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%)',
+        border: '1px dashed #3a3a3a',
+        borderRadius: '12px'
+      }}
+    >
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <input
+          type="text"
+          value={newTask}
+          onChange={(e) => setNewTask(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { setNewTask(''); setNewReward(''); setActiveAddSlot(null) } }}
+          placeholder={`Add a ${categoryLabel} task…`}
+          disabled={loading || isPastDay}
+          autoFocus
+          style={{
+            flex: 1,
+            minWidth: '160px',
+            padding: '12px 14px',
+            background: '#0a0a0a',
+            border: '1px solid #3a3a3a',
+            borderRadius: '8px',
+            color: '#fff',
+            fontSize: '14px',
+            fontWeight: 500,
+            outline: 'none'
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = '#ff6b35'
+            e.currentTarget.style.boxShadow = '0 0 0 3px rgba(255, 107, 53, 0.1)'
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = '#3a3a3a'
+            e.currentTarget.style.boxShadow = 'none'
+          }}
+        />
+        <button
+          type="submit"
+          disabled={!canAddTask}
+          style={{
+            padding: '12px 20px',
+            background: canAddTask
+              ? 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)'
+              : 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: canAddTask ? 'pointer' : 'not-allowed',
+            fontWeight: 700,
+            fontSize: '14px'
+          }}
+        >
+          ADD
+        </button>
+        <button
+          type="button"
+          onClick={() => { setNewTask(''); setNewReward(''); setActiveAddSlot(null) }}
+          style={{
+            padding: '12px 16px',
+            background: 'rgba(255, 255, 255, 0.06)',
+            color: '#888',
+            border: '1px solid #3a3a3a',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 700,
+            fontSize: '14px'
+          }}
+        >
+          ✕
+        </button>
+      </div>
+      <input
+        type="text"
+        value={newReward}
+        onChange={(e) => setNewReward(e.target.value)}
+        placeholder="Optional reward…"
+        disabled={loading || isPastDay}
+        style={{
+          padding: '10px 14px',
+          background: '#0a0a0a',
+          border: '1px solid #3a3a3a',
+          borderRadius: '8px',
+          color: '#ffd700',
+          fontSize: '13px',
+          fontWeight: 500,
+          outline: 'none'
+        }}
+        onFocus={(e) => {
+          e.currentTarget.style.borderColor = '#ffd700'
+          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(255, 215, 0, 0.1)'
+        }}
+        onBlur={(e) => {
+          e.currentTarget.style.borderColor = '#3a3a3a'
+          e.currentTarget.style.boxShadow = 'none'
+        }}
+      />
+    </form>
+  )
+
+  // Dashed "add" button for an empty 5M slot. Clicking opens the inline form
+  // for that slot.
+  const renderAddSlotButton = (slotIndex: number, categoryLabel: string, key: string) => (
+    <button
+      key={key}
+      type="button"
+      onClick={() => { setNewTask(''); setNewReward(''); setActiveAddSlot(slotIndex) }}
+      style={{
+        padding: '16px',
+        background: 'transparent',
+        border: '1px dashed #3a3a3a',
+        borderRadius: '12px',
+        color: '#888',
+        fontSize: '13px',
+        fontWeight: 600,
+        cursor: 'pointer',
+        textAlign: 'center',
+        transition: 'all 0.2s ease'
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = '#ff6b35'
+        e.currentTarget.style.color = '#ff6b35'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = '#3a3a3a'
+        e.currentTarget.style.color = '#888'
+      }}
+    >
+      ＋ Add {categoryLabel} task
+    </button>
+  )
+
+  // Faint placeholder for an empty 5M slot when adding isn't possible
+  // (e.g. viewing a past day).
+  const renderEmptySlot = (key: string) => (
+    <div
+      key={key}
+      style={{
+        padding: '16px',
+        border: '1px dashed #2a2a2a',
+        borderRadius: '12px',
+        color: '#555',
+        fontSize: '13px',
+        fontWeight: 500,
+        textAlign: 'center'
+      }}
+    >
+      Empty slot
+    </div>
+  )
+
+  // Renders the 5 category sections of the 5M framework. Tasks are placed by
+  // their stored slot (task_order); any tasks with an out-of-range or colliding
+  // slot fall back to the next free slot so none are hidden.
+  const renderFiveMFramework = () => {
+    const slotCount = FIVE_M_CATEGORIES.length * TASKS_PER_CATEGORY
+    const tasksBySlot: (Task | undefined)[] = new Array(slotCount).fill(undefined)
+    for (const t of tasks) {
+      let idx = t.task_order >= 0 && t.task_order < slotCount ? t.task_order : -1
+      if (idx === -1 || tasksBySlot[idx]) {
+        idx = tasksBySlot.findIndex((x) => !x)
+      }
+      if (idx !== -1) tasksBySlot[idx] = t
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        {FIVE_M_CATEGORIES.map((cat, ci) => {
+          const start = ci * TASKS_PER_CATEGORY
+          return (
+            <div
+              key={cat.key}
+              style={{
+                padding: 'clamp(12px, 3vw, 16px)',
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid #2a2a2a',
+                borderRadius: '14px'
+              }}
+            >
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                marginBottom: '12px'
+              }}>
+                <span style={{ fontSize: '24px', lineHeight: 1 }}>{cat.emoji}</span>
+                <span style={{
+                  fontSize: '16px',
+                  fontWeight: 800,
+                  color: '#fff',
+                  letterSpacing: '0.5px',
+                  textTransform: 'uppercase'
+                }}>
+                  {cat.label}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {Array.from({ length: TASKS_PER_CATEGORY }).map((_, si) => {
+                  const flatIndex = start + si
+                  const task = tasksBySlot[flatIndex]
+                  if (task) return renderTaskRow(task, false)
+                  if (activeAddSlot === flatIndex) {
+                    return renderInlineAdd(flatIndex, cat.label)
+                  }
+                  // Any empty slot is addable (in any order) unless we're on a
+                  // past day or already at the 10-task cap.
+                  if (!isPastDay && tasks.length < slotCount) {
+                    return renderAddSlotButton(flatIndex, cat.label, `add-${cat.key}-${si}`)
+                  }
+                  return renderEmptySlot(`empty-${cat.key}-${si}`)
+                })}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
 
   // ============================================================================
   // UI RENDER
@@ -693,6 +1229,47 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         <p style={{ color: '#888', fontSize: 'clamp(12px, 3vw, 14px)', fontWeight: 500 }}>
           Complete tasks to level up • {tasks.length}/10 slots used
         </p>
+
+        {/* View mode toggle: flat 10-task list vs the 5M framework */}
+        <div style={{
+          display: 'flex',
+          gap: '6px',
+          marginTop: '16px',
+          padding: '4px',
+          background: '#0a0a0a',
+          border: '1px solid #3a3a3a',
+          borderRadius: '12px'
+        }}>
+          {([
+            { mode: 'list' as const, label: '📋 10 Tasks' },
+            { mode: 'fivem' as const, label: '🎯 5M Framework' },
+          ]).map(({ mode, label }) => {
+            const active = viewMode === mode
+            return (
+              <button
+                key={mode}
+                onClick={() => changeViewMode(mode)}
+                style={{
+                  flex: 1,
+                  padding: '10px 12px',
+                  background: active
+                    ? 'linear-gradient(135deg, #ff6b35 0%, #ff4500 100%)'
+                    : 'transparent',
+                  color: active ? '#fff' : '#888',
+                  border: 'none',
+                  borderRadius: '9px',
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  transition: 'all 0.2s ease',
+                  boxShadow: active ? '0 4px 12px rgba(255, 107, 53, 0.3)' : 'none'
+                }}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
 
         {/* Day toggler */}
         <div style={{
@@ -728,11 +1305,13 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                 ? 'TODAY'
                 : dayOffset === 1
                 ? 'TOMORROW'
+                : dayOffset === -1
+                ? 'YESTERDAY'
                 : new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase()}
             </div>
             <div style={{ color: '#888', fontSize: '12px', fontWeight: 500 }}>
               {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-              {!isToday && ` • +${dayOffset} day${dayOffset === 1 ? '' : 's'}`}
+              {!isToday && ` • ${dayOffset > 0 ? '+' : ''}${dayOffset} day${Math.abs(dayOffset) === 1 ? '' : 's'}`}
             </div>
           </div>
           <button
@@ -756,18 +1335,18 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         {/* Copy-from-another-day button */}
         <button
           onClick={openCopyPicker}
-          disabled={loading || tasks.length >= 10}
+          disabled={loading || tasks.length >= 10 || isPastDay || isPastDay}
           style={{
             marginTop: '10px',
             width: '100%',
             padding: '10px 14px',
-            background: loading || tasks.length >= 10
+            background: loading || tasks.length >= 10 || isPastDay
               ? '#1a1a1a'
               : 'linear-gradient(135deg, rgba(255, 215, 0, 0.15) 0%, rgba(255, 165, 0, 0.1) 100%)',
-            color: loading || tasks.length >= 10 ? '#555' : '#ffd700',
-            border: '1px solid ' + (loading || tasks.length >= 10 ? '#2a2a2a' : 'rgba(255, 215, 0, 0.4)'),
+            color: loading || tasks.length >= 10 || isPastDay ? '#555' : '#ffd700',
+            border: '1px solid ' + (loading || tasks.length >= 10 || isPastDay ? '#2a2a2a' : 'rgba(255, 215, 0, 0.4)'),
             borderRadius: '10px',
-            cursor: loading || tasks.length >= 10 ? 'not-allowed' : 'pointer',
+            cursor: loading || tasks.length >= 10 || isPastDay ? 'not-allowed' : 'pointer',
             fontWeight: 700,
             fontSize: '13px',
             transition: 'all 0.2s ease'
@@ -905,7 +1484,8 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
         )}
       </div>
       
-      {/* Add Task Form */}
+      {/* Add Task Form — only in flat list mode; the 5M grid has inline adds */}
+      {viewMode === 'list' && (
       <form onSubmit={handleAddTask} style={{ marginBottom: '30px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }} className="responsive-flex">
@@ -914,7 +1494,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
               value={newTask}
               onChange={(e) => setNewTask(e.target.value)}
               placeholder="Enter your task..."
-              disabled={isMaxTasks || loading}
+              disabled={isMaxTasks || loading || isPastDay}
               style={{
                 flex: 1,
                 padding: '16px 20px',
@@ -973,7 +1553,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
             value={newReward}
             onChange={(e) => setNewReward(e.target.value)}
             placeholder="Optional: Enter reward for completing this task..."
-            disabled={isMaxTasks || loading}
+            disabled={isMaxTasks || loading || isPastDay}
             style={{
               padding: '14px 20px',
               background: '#0a0a0a',
@@ -1010,6 +1590,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
           </div>
         )}
       </form>
+      )}
 
       {/* Tasks List */}
       <div>
@@ -1040,6 +1621,8 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
               }
             `}</style>
           </div>
+        ) : viewMode === 'fivem' ? (
+          renderFiveMFramework()
         ) : tasks.length === 0 ? (
           <div style={{
             textAlign: 'center',
@@ -1055,238 +1638,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {tasks.map((task) => (
-              <div
-                key={task.id}
-                draggable={!task.is_done && !loading}
-                onDragStart={(e) => handleDragStart(e, task.id)}
-                onDragOver={(e) => handleDragOver(e, task.id)}
-                onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, task.id)}
-                onDragEnd={handleDragEnd}
-                style={getTaskItemStyle(task)}
-              >
-                {/* Drag Handle */}
-                {!task.is_done && (
-                  <div
-                    style={{
-                      marginRight: '8px',
-                      color: '#666',
-                      fontSize: '16px',
-                      cursor: 'grab',
-                      userSelect: 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '4px',
-                      lineHeight: '1'
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    <span style={{ 
-                      display: 'inline-block',
-                      transform: 'rotate(90deg)',
-                      letterSpacing: '2px'
-                    }}>⋮⋮</span>
-                  </div>
-                )}
-                <input
-                  type="checkbox"
-                  checked={task.is_done}
-                  onChange={() => task.is_done ? handleUncompleteTask(task.id) : handleCompleteTask(task.id)}
-                  disabled={loading}
-                  title={!isToday ? "Counts toward today's level (capped at 10)" : undefined}
-                  style={{
-                    marginRight: '16px',
-                    width: '24px',
-                    height: '24px',
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    accentColor: '#ff6b35',
-                    flexShrink: 0
-                  }}
-                />
-                {editingTaskId === task.id ? (
-                  /* Editing mode */
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <input
-                      type="text"
-                      value={editDescription}
-                      onChange={(e) => setEditDescription(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveEdit(task.id)
-                        if (e.key === 'Escape') cancelEditing()
-                      }}
-                      autoFocus
-                      style={{
-                        padding: '8px 12px',
-                        background: '#0a0a0a',
-                        border: '1px solid #ff6b35',
-                        borderRadius: '8px',
-                        color: '#fff',
-                        fontSize: '15px',
-                        fontWeight: 500,
-                        outline: 'none',
-                        boxShadow: '0 0 0 3px rgba(255, 107, 53, 0.1)'
-                      }}
-                    />
-                    <input
-                      type="text"
-                      value={editReward}
-                      onChange={(e) => setEditReward(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveEdit(task.id)
-                        if (e.key === 'Escape') cancelEditing()
-                      }}
-                      placeholder="Reward (optional)"
-                      style={{
-                        padding: '6px 12px',
-                        background: '#0a0a0a',
-                        border: '1px solid #3a3a3a',
-                        borderRadius: '8px',
-                        color: '#ffd700',
-                        fontSize: '13px',
-                        fontWeight: 500,
-                        outline: 'none'
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = '#ffd700'
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(255, 215, 0, 0.1)'
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#3a3a3a'
-                        e.currentTarget.style.boxShadow = 'none'
-                      }}
-                    />
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        onClick={() => handleSaveEdit(task.id)}
-                        disabled={!editDescription.trim()}
-                        style={{
-                          padding: '6px 14px',
-                          background: editDescription.trim()
-                            ? 'linear-gradient(135deg, #4caf50 0%, #388e3c 100%)'
-                            : '#2a2a2a',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '8px',
-                          cursor: editDescription.trim() ? 'pointer' : 'not-allowed',
-                          fontWeight: 700,
-                          fontSize: '12px',
-                          transition: 'all 0.3s ease'
-                        }}
-                      >
-                        SAVE
-                      </button>
-                      <button
-                        onClick={cancelEditing}
-                        style={{
-                          padding: '6px 14px',
-                          background: 'rgba(255, 255, 255, 0.1)',
-                          color: '#888',
-                          border: '1px solid #3a3a3a',
-                          borderRadius: '8px',
-                          cursor: 'pointer',
-                          fontWeight: 700,
-                          fontSize: '12px',
-                          transition: 'all 0.3s ease'
-                        }}
-                      >
-                        CANCEL
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  /* Display mode */
-                  <>
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <span
-                        style={{
-                          textDecoration: task.is_done ? 'line-through' : 'none',
-                          opacity: task.is_done ? 0.5 : 1,
-                          color: task.is_done ? '#888' : '#fff',
-                          fontSize: '15px',
-                          fontWeight: task.is_done ? 500 : 600
-                        }}
-                      >
-                        {task.description}
-                      </span>
-                      {task.reward && (
-                        <span
-                          style={{
-                            fontSize: '13px',
-                            color: task.is_done ? '#888' : '#ffd700',
-                            fontWeight: 600,
-                            fontStyle: 'italic',
-                            opacity: task.is_done ? 0.5 : 1
-                          }}
-                        >
-                          🎁 Reward: {task.reward}
-                        </span>
-                      )}
-                    </div>
-                    {!task.is_done && (
-                      <button
-                        onClick={() => startEditing(task)}
-                        disabled={loading}
-                        style={{
-                          padding: '8px 16px',
-                          background: 'rgba(255, 107, 53, 0.1)',
-                          color: '#ff6b35',
-                          border: '1px solid rgba(255, 107, 53, 0.3)',
-                          borderRadius: '8px',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontWeight: 600,
-                          fontSize: '13px',
-                          transition: 'all 0.3s ease'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!loading) {
-                            e.currentTarget.style.background = 'rgba(255, 107, 53, 0.2)'
-                            e.currentTarget.style.borderColor = '#ff6b35'
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!loading) {
-                            e.currentTarget.style.background = 'rgba(255, 107, 53, 0.1)'
-                            e.currentTarget.style.borderColor = 'rgba(255, 107, 53, 0.3)'
-                          }
-                        }}
-                      >
-                        EDIT
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDeleteTask(task.id)}
-                      disabled={loading}
-                      style={{
-                        padding: '8px 16px',
-                        background: 'rgba(255, 68, 68, 0.1)',
-                        color: '#ff4444',
-                        border: '1px solid rgba(255, 68, 68, 0.3)',
-                        borderRadius: '8px',
-                        cursor: loading ? 'not-allowed' : 'pointer',
-                        fontWeight: 600,
-                        fontSize: '13px',
-                        transition: 'all 0.3s ease'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!loading) {
-                          e.currentTarget.style.background = 'rgba(255, 68, 68, 0.2)'
-                          e.currentTarget.style.borderColor = '#ff4444'
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!loading) {
-                          e.currentTarget.style.background = 'rgba(255, 68, 68, 0.1)'
-                          e.currentTarget.style.borderColor = 'rgba(255, 68, 68, 0.3)'
-                        }
-                      }}
-                    >
-                      DELETE
-                    </button>
-                  </>
-                )}
-              </div>
-            ))}
+            {tasks.map((task) => renderTaskRow(task, true))}
           </div>
         )}
       </div>

@@ -155,18 +155,144 @@ export async function getTodayTasks(userId: string, signal?: AbortSignal): Promi
   return getTasksForDate(userId, getCurrentTaskDate(), signal)
 }
 
+// Returns snapshot rows for a past day, mapped to the Task shape so the UI
+// can render them with the same component. `task_date` is filled from
+// `snapshot_date`; rows are read-only except for `is_done`, which can be
+// toggled via completeSnapshotTask / uncompleteSnapshotTask.
+export async function getSnapshotTasksForDate(userId: string, date: string, signal?: AbortSignal): Promise<Task[]> {
+  if (isGuest(userId)) return []
+  const query = supabase
+    .from('daily_task_snapshots')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('snapshot_date', date)
+    .order('task_order', { ascending: true })
+
+  if (signal) {
+    query.abortSignal(signal)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return ((data || []) as any[]).map((r) => ({
+    id: r.id,
+    user_id: r.user_id,
+    description: r.description,
+    reward: r.reward,
+    is_done: r.is_done,
+    task_order: r.task_order,
+    task_date: r.snapshot_date,
+    created_at: r.created_at,
+  }))
+}
+
+// Toggle is_done on a snapshot row and award gold + lifetime_exp. Does NOT
+// touch tasks_completed_today, avatar_level, or completed_all_tasks_at — the
+// past day's leaderboard rank and today's daily rank are both left alone.
+export async function completeSnapshotTask(snapshotId: string, userId: string): Promise<Profile> {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single()
+  if (profileError) throw profileError
+  const typedProfile = profile as Profile
+
+  const { data: snap, error: snapError } = await supabase
+    .from('daily_task_snapshots')
+    .select('is_done, user_id')
+    .eq('id', snapshotId)
+    .single()
+  if (snapError) throw snapError
+  const typedSnap = snap as { is_done: boolean; user_id: string }
+  if (typedSnap.user_id !== userId) throw new Error('Not your task')
+  if (typedSnap.is_done) return typedProfile
+
+  const { error: updateSnapError } = await ((supabase
+    .from('daily_task_snapshots') as any)
+    .update({ is_done: true })
+    .eq('id', snapshotId))
+  if (updateSnapError) throw updateSnapError
+
+  const goldReward = 10
+  const expReward = taskExpReward(snapshotId)
+
+  const { data: updatedData, error: directUpdateError } = await ((supabase
+    .from('profiles') as any)
+    .update({
+      lifetime_exp: typedProfile.lifetime_exp + expReward,
+      gold: typedProfile.gold + goldReward,
+    })
+    .eq('id', userId)
+    .select()
+    .single())
+  if (directUpdateError) throw directUpdateError
+  return updatedData as Profile
+}
+
+export async function uncompleteSnapshotTask(snapshotId: string, userId: string): Promise<Profile> {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single()
+  if (profileError) throw profileError
+  const typedProfile = profile as Profile
+
+  const { data: snap, error: snapError } = await supabase
+    .from('daily_task_snapshots')
+    .select('is_done, user_id')
+    .eq('id', snapshotId)
+    .single()
+  if (snapError) throw snapError
+  const typedSnap = snap as { is_done: boolean; user_id: string }
+  if (typedSnap.user_id !== userId) throw new Error('Not your task')
+  if (!typedSnap.is_done) return typedProfile
+
+  const { error: updateSnapError } = await ((supabase
+    .from('daily_task_snapshots') as any)
+    .update({ is_done: false })
+    .eq('id', snapshotId))
+  if (updateSnapError) throw updateSnapError
+
+  const goldRefund = 10
+  const expRefund = taskExpReward(snapshotId)
+  const newGold = Math.max(0, typedProfile.gold - goldRefund)
+  const newExp = Math.max(0, typedProfile.lifetime_exp - expRefund)
+
+  const { data: updatedData, error: directUpdateError } = await ((supabase
+    .from('profiles') as any)
+    .update({
+      lifetime_exp: newExp,
+      gold: newGold,
+    })
+    .eq('id', userId)
+    .select()
+    .single())
+  if (directUpdateError) throw directUpdateError
+  return updatedData as Profile
+}
+
 export async function addTask(
   userId: string,
   description: string,
   reward?: string | null,
-  taskDate?: string
+  taskDate?: string,
+  // Explicit 0-based slot to place the task in. Used by the 5M framework so a
+  // task can be added to any category slot regardless of fill order. When
+  // omitted, the task is appended after the highest existing slot.
+  taskOrder?: number
 ): Promise<Task> {
   const date = taskDate || getCurrentTaskDate()
-  if (isGuest(userId)) return addGuestTask(description, reward ?? null, date)
+  if (isGuest(userId)) return addGuestTask(description, reward ?? null, date, taskOrder)
   const currentTasks = await getTasksForDate(userId, date)
   if (currentTasks.length >= 10) {
     throw new Error('Maximum 10 tasks per day')
   }
+
+  const order = typeof taskOrder === 'number'
+    ? taskOrder
+    : currentTasks.length === 0 ? 0 : Math.max(...currentTasks.map((t) => t.task_order)) + 1
 
   const { data, error } = await ((supabase
     .from('tasks') as any)
@@ -175,7 +301,7 @@ export async function addTask(
       description,
       reward: reward && reward.trim() ? reward.trim() : null,
       is_done: false,
-      task_order: currentTasks.length,
+      task_order: order,
       task_date: date,
     })
     .select()

@@ -145,16 +145,19 @@ export function getGuestTasksForDate(date: string): Task[] {
   return s.tasks.filter((t) => t.task_date === date).sort((a, b) => a.task_order - b.task_order)
 }
 
-export function addGuestTask(description: string, reward: string | null, date: string): Task {
+export function addGuestTask(description: string, reward: string | null, date: string, taskOrder?: number): Task {
   const existing = getGuestTasksForDate(date)
   if (existing.length >= 10) throw new Error('Maximum 10 tasks per day')
+  const order = typeof taskOrder === 'number'
+    ? taskOrder
+    : existing.length === 0 ? 0 : Math.max(...existing.map((t) => t.task_order)) + 1
   const task: Task = {
     id: makeId(),
     user_id: GUEST_USER_ID,
     description,
     reward: reward && reward.trim() ? reward.trim() : null,
     is_done: false,
-    task_order: existing.length,
+    task_order: order,
     task_date: date,
     created_at: nowIso(),
   } as Task
