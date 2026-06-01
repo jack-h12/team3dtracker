@@ -35,9 +35,12 @@ export function getGorillaCount(
   }, 0)
 }
 
-function GorillaPet({ size }: { size: number }) {
+function GorillaPet({ size }: { size: number | string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  // "active" = animate the gif. Driven by hover on desktop and tap on mobile.
   const [hovered, setHovered] = useState(false)
+  const [tapped, setTapped] = useState(false)
+  const active = hovered || tapped
 
   // Capture the first frame of the gif onto the canvas once, so we can show a
   // static "paused" gorilla while not hovering.
@@ -66,7 +69,14 @@ function GorillaPet({ size }: { size: number }) {
     <span
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onClick={(e) => {
+        // On mobile (and trackpads) a tap toggles the animation. Stop the event
+        // bubbling so it doesn't trigger the parent row's "view profile" click.
+        e.stopPropagation()
+        setTapped((prev) => !prev)
+      }}
       style={{
+        cursor: 'pointer',
         position: 'relative',
         display: 'inline-block',
         width: size,
@@ -84,11 +94,11 @@ function GorillaPet({ size }: { size: number }) {
           objectFit: 'contain',
           borderRadius: '6px',
           display: 'block',
-          visibility: hovered ? 'hidden' : 'visible',
+          visibility: active ? 'hidden' : 'visible',
         }}
       />
-      {/* Animated gif on hover (mounting fresh restarts the animation) */}
-      {hovered && (
+      {/* Animated gif while active (mounting fresh restarts the animation) */}
+      {active && (
         <img
           src={GORILLA_GIF}
           alt="Pet Gorilla"
@@ -108,7 +118,7 @@ function GorillaPet({ size }: { size: number }) {
 
 interface GorillaPetsProps {
   count: number
-  size?: number
+  size?: number | string
   gap?: number
 }
 

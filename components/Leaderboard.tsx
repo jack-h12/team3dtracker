@@ -1120,23 +1120,21 @@ export default function Leaderboard() {
                       minWidth: 0,
                       overflow: 'hidden'
                     }}>
-                      <div style={{
-                        fontSize: 'clamp(14px, 3.5vw, 20px)',
-                        fontWeight: 700,
-                        color: index < 3 ? '#000' : '#fff',
-                        marginBottom: '6px',
-                        letterSpacing: '-0.5px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        overflow: 'hidden'
-                      }}>
-                        <span style={{
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          minWidth: 0
-                        }}>
+                      <div
+                        className="name-scroll"
+                        style={{
+                          fontSize: 'clamp(14px, 3.5vw, 20px)',
+                          fontWeight: 700,
+                          color: index < 3 ? '#000' : '#fff',
+                          marginBottom: '6px',
+                          letterSpacing: '-0.5px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        <span style={{ flexShrink: 0 }}>
                           {getDisplayName(user).toUpperCase()}
                           {user.display_name && (
                             <span style={{
@@ -1150,7 +1148,7 @@ export default function Leaderboard() {
                             </span>
                           )}
                         </span>
-                        <GorillaPets count={getGorillaCount(userInventories[user.id])} size={42} />
+                        <GorillaPets count={getGorillaCount(userInventories[user.id])} size="clamp(22px, 5.5vw, 42px)" />
                       </div>
                       <div style={{
                         fontSize: 'clamp(11px, 2.5vw, 13px)',

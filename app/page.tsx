@@ -691,7 +691,7 @@ export default function Home() {
           margin: '0 auto',
           padding: '0 15px'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flexShrink: 1 }}>
             {/* Mobile Menu Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -722,17 +722,21 @@ export default function Home() {
               }}
               className="header-logo"
             />
-            <h1 style={{ 
-              margin: 0, 
+            <h1 style={{
+              margin: 0,
               fontSize: 'clamp(18px, 4vw, 28px)',
               fontWeight: 800,
               background: 'linear-gradient(135deg, #ffffff 0%, #ff6b35 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
-              letterSpacing: '-0.5px'
+              letterSpacing: '-0.5px',
+              minWidth: 0,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
             }}>TEAM3D TRACKER</h1>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
             {/* Reset Countdown */}
             <div style={{
               padding: '6px 12px',
@@ -748,7 +752,7 @@ export default function Home() {
               <span style={{ fontSize: 'clamp(13px, 2.5vw, 16px)', fontWeight: 700, color: '#ff6b35', fontVariantNumeric: 'tabular-nums' }}>{resetCountdown}</span>
             </div>
             <Inbox userId={user.id} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="header-username">
               <div style={{
                 padding: '6px 12px',
                 background: 'rgba(255, 107, 53, 0.1)',
