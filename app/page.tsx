@@ -30,6 +30,8 @@ import Testosterone from '@/components/Testosterone'
 import Lifts from '@/components/Lifts'
 import Modal from '@/components/Modal'
 import Inbox from '@/components/Inbox'
+import GorillaPets, { getGorillaCount } from '@/components/GorillaPets'
+import { getUserInventory } from '@/lib/shop'
 import { isAdmin } from '@/lib/admin'
 import { setModalStateSetter, getModalState, closeModal } from '@/lib/modal'
 import type { Profile } from '@/lib/supabase'
@@ -53,6 +55,7 @@ export default function Home() {
   const [passwordResetError, setPasswordResetError] = useState('')
   const [passwordResetLoading, setPasswordResetLoading] = useState(false)
   const [resetCountdown, setResetCountdown] = useState('')
+  const [gorillaCount, setGorillaCount] = useState(0)
 
   useEffect(() => {
     setModalStateSetter(setModalState)
@@ -245,6 +248,14 @@ export default function Home() {
         
         // If user is not admin but somehow on admin view, redirect to tasks
         setCurrentView(prev => !adminStatus && prev === 'admin' ? 'tasks' : prev)
+
+        // Load pet gorilla count for the header (guests have no inventory)
+        try {
+          const inventory = await getUserInventory(userId)
+          setGorillaCount(getGorillaCount(inventory))
+        } catch (invErr) {
+          console.error('Error loading inventory for gorilla count:', invErr)
+        }
       }
       
       // Only check for daily reset on initial load, not every time profile is reloaded
@@ -737,19 +748,22 @@ export default function Home() {
               <span style={{ fontSize: 'clamp(13px, 2.5vw, 16px)', fontWeight: 700, color: '#ff6b35', fontVariantNumeric: 'tabular-nums' }}>{resetCountdown}</span>
             </div>
             <Inbox userId={user.id} />
-            <div style={{
-              padding: '6px 12px',
-              background: 'rgba(255, 107, 53, 0.1)',
-              borderRadius: '8px',
-              border: '1px solid rgba(255, 107, 53, 0.3)',
-              fontWeight: 600,
-              fontSize: 'clamp(11px, 2.5vw, 14px)',
-              color: '#ff6b35',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              maxWidth: '150px'
-            }} className="header-username">{profile.display_name || profile.username}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{
+                padding: '6px 12px',
+                background: 'rgba(255, 107, 53, 0.1)',
+                borderRadius: '8px',
+                border: '1px solid rgba(255, 107, 53, 0.3)',
+                fontWeight: 600,
+                fontSize: 'clamp(11px, 2.5vw, 14px)',
+                color: '#ff6b35',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '150px'
+              }} className="header-username">{profile.display_name || profile.username}</div>
+              <GorillaPets count={gorillaCount} size={28} />
+            </div>
             <button
               onClick={handleSignOut}
               style={{ 

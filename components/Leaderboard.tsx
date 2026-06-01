@@ -21,6 +21,7 @@ import { getDisplayName, supabase } from '@/lib/supabase'
 import { getUserInventory, getWeaponDamage, getProtectionValue } from '@/lib/shop'
 import { withRetry, wasTabRecentlyHidden } from '@/lib/supabase-helpers'
 import { getAvatarImage, getItemImage, getPotionTimeRemaining, getArmourTimeRemaining } from '@/lib/utils'
+import GorillaPets, { getGorillaCount } from './GorillaPets'
 import type { ShopItem, UserInventory } from '@/lib/supabase'
 import type { Profile, Task } from '@/lib/supabase'
 
@@ -621,15 +622,25 @@ export default function Leaderboard() {
                 })()}
               </div>
               
-              <h3 style={{
-                fontSize: 'clamp(20px, 5vw, 28px)',
-                fontWeight: 800,
-                margin: '0 0 20px 0',
-                color: '#fff',
-                letterSpacing: '-0.5px',
-                wordBreak: 'break-word',
-                overflowWrap: 'break-word'
-              }}>{selectedUser.username.toUpperCase()}</h3>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                flexWrap: 'wrap',
+                margin: '0 0 20px 0'
+              }}>
+                <h3 style={{
+                  fontSize: 'clamp(20px, 5vw, 28px)',
+                  fontWeight: 800,
+                  margin: 0,
+                  color: '#fff',
+                  letterSpacing: '-0.5px',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'break-word'
+                }}>{selectedUser.username.toUpperCase()}</h3>
+                <GorillaPets count={getGorillaCount(userInventory)} size={32} />
+              </div>
             </div>
             
             <div style={{
@@ -1115,22 +1126,31 @@ export default function Leaderboard() {
                         color: index < 3 ? '#000' : '#fff',
                         marginBottom: '6px',
                         letterSpacing: '-0.5px',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        overflow: 'hidden'
                       }}>
-                        {getDisplayName(user).toUpperCase()}
-                        {user.display_name && (
-                          <span style={{
-                            fontSize: 'clamp(10px, 2vw, 12px)',
-                            color: index < 3 ? '#666' : '#888',
-                            fontWeight: 500,
-                            marginLeft: '4px',
-                            fontStyle: 'italic'
-                          }}>
-                            ({user.username})
-                          </span>
-                        )}
+                        <span style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          minWidth: 0
+                        }}>
+                          {getDisplayName(user).toUpperCase()}
+                          {user.display_name && (
+                            <span style={{
+                              fontSize: 'clamp(10px, 2vw, 12px)',
+                              color: index < 3 ? '#666' : '#888',
+                              fontWeight: 500,
+                              marginLeft: '4px',
+                              fontStyle: 'italic'
+                            }}>
+                              ({user.username})
+                            </span>
+                          )}
+                        </span>
+                        <GorillaPets count={getGorillaCount(userInventories[user.id])} size={42} />
                       </div>
                       <div style={{
                         fontSize: 'clamp(11px, 2.5vw, 13px)',
