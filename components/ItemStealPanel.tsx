@@ -13,8 +13,10 @@ import {
   type ItemStealCooldown,
 } from '@/lib/itemSteal'
 import { getDailyLeaderboard } from '@/lib/leaderboard'
-import { getDisplayName } from '@/lib/supabase'
+import { getDisplayName, supabase } from '@/lib/supabase'
 import { showModal, showConfirm } from '@/lib/modal'
+import { getAvatarImage } from '@/lib/utils'
+import ItemStealAnimation from '@/components/ItemStealAnimation'
 import type { Profile, ShopItem, UserInventory } from '@/lib/supabase'
 
 interface ItemStealPanelProps {
@@ -37,7 +39,16 @@ export default function ItemStealPanel({ userId, stealInventory, userGold, onCha
   const [selectedInvId, setSelectedInvId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [now, setNow] = useState<number>(() => Date.now())
+  const [animation, setAnimation] = useState<{
+    result: 'success' | 'failure'
+    targetAvatar: string
+    targetName: string
+    itemName: string
+    worth: number
+  } | null>(null)
   const mountedRef = useRef(true)
+  const seenResultIdsRef = useRef<Set<string>>(new Set())
+  const firstLoadRef = useRef(true)
 
   const reload = useCallback(async () => {
     const [usersRes, notifRes, cdRes] = await Promise.allSettled([
@@ -50,8 +61,65 @@ export default function ItemStealPanel({ userId, stealInventory, userGold, onCha
     if (usersRes.status === 'fulfilled') setUsers(usersRes.value.filter((u) => u.id !== userId))
     else console.error('getDailyLeaderboard failed:', usersRes.reason)
 
-    if (notifRes.status === 'fulfilled') setNotifications(notifRes.value)
-    else console.error('getItemStealNotifications failed:', notifRes.reason)
+    if (notifRes.status === 'fulfilled') {
+      const next = notifRes.value
+      setNotifications(next)
+
+      // Detect newly-arrived target-facing results (you got robbed / you got paid)
+      // and play the heist animation for the first one we haven't seen. On the
+      // very first render we seed the seen-set silently so old results don't
+      // replay on every page load. The thief's own result is animated directly
+      // from handleSteal, so we only react to target-facing kinds here.
+      const targetKinds = new Set(['item_stolen', 'thief_paid'])
+      if (firstLoadRef.current) {
+        next.forEach((n) => seenResultIdsRef.current.add(n.id))
+        firstLoadRef.current = false
+      } else {
+        const fresh = next.find((n) => targetKinds.has(n.kind) && !seenResultIdsRef.current.has(n.id))
+        if (fresh) {
+          next.forEach((n) => seenResultIdsRef.current.add(n.id))
+          ;(async () => {
+            let avatar = '/smeagol-level1.webp'
+            let name = 'Unknown'
+            if (fresh.attempt_id) {
+              try {
+                const { data } = await supabase
+                  .from('item_steal_attempts')
+                  .select('thief_id')
+                  .eq('id', fresh.attempt_id)
+                  .single()
+                const att = data as { thief_id: string } | null
+                if (att) {
+                  const { data: p } = await supabase
+                    .from('profiles')
+                    .select('username, display_name, avatar_level')
+                    .eq('id', att.thief_id)
+                    .single()
+                  const prof = p as { username: string; display_name: string | null; avatar_level: number } | null
+                  if (prof) {
+                    avatar = getAvatarImage(prof.avatar_level)
+                    name = prof.display_name || prof.username
+                  }
+                }
+              } catch (e) {
+                console.error('item steal animation lookup failed', e)
+              }
+            }
+            // From the target's view: item_stolen = the thief won (success);
+            // thief_paid = the thief was caught and paid you (failure).
+            setAnimation({
+              result: fresh.kind === 'item_stolen' ? 'success' : 'failure',
+              targetAvatar: avatar,
+              targetName: name,
+              itemName: fresh.item_name || 'an item',
+              worth: Math.abs(fresh.gold_delta),
+            })
+          })()
+        }
+      }
+    } else {
+      console.error('getItemStealNotifications failed:', notifRes.reason)
+    }
 
     if (cdRes.status === 'fulfilled') setCooldown(cdRes.value)
     else console.error('getItemStealCooldown failed:', cdRes.reason)
@@ -128,13 +196,18 @@ export default function ItemStealPanel({ userId, stealInventory, userGold, onCha
     try {
       const result = await attemptItemSteal(userId, stealInventory.id, selectedItem.inventory_id)
       setModalOpen(false)
+      // Play the heist animation rather than a plain modal. The animation looks
+      // up nothing — we already have the target's avatar/name from the picker.
+      setAnimation({
+        result: result.success ? 'success' : 'failure',
+        targetAvatar: targetUser ? getAvatarImage(targetUser.avatar_level) : '/smeagol-level1.webp',
+        targetName: result.target_name || (targetUser ? getDisplayName(targetUser) : 'Unknown'),
+        itemName: result.item_name,
+        worth: result.worth,
+      })
+      // Don't let our own fresh result re-trigger the target-side animation path.
       await reload()
       onChange()
-      if (result.success) {
-        await showModal('Steal succeeded! 🥷', `You stole ${result.item_name} from ${result.target_name}!`, 'success')
-      } else {
-        await showModal('Steal failed', `You couldn't grab ${result.item_name}. You paid ${result.target_name} ${result.worth} gold.`, 'error')
-      }
     } catch (err: any) {
       await showModal('Error', err.message || 'Failed to attempt steal', 'error')
     } finally {
@@ -255,6 +328,18 @@ export default function ItemStealPanel({ userId, stealInventory, userGold, onCha
             )
           })}
         </div>
+      )}
+
+      {animation && (
+        <ItemStealAnimation
+          isOpen={true}
+          result={animation.result}
+          targetAvatar={animation.targetAvatar}
+          targetName={animation.targetName}
+          itemName={animation.itemName}
+          worth={animation.worth}
+          onComplete={() => setAnimation(null)}
+        />
       )}
 
       {modalOpen && stealInventory && (

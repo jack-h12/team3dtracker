@@ -120,7 +120,10 @@ BEGIN
   END IF;
 
   RETURN QUERY
-    SELECT ui.id, ui.item_id, si.name, si.type, si.cost, ui.quantity
+    -- Cast numeric columns to int: shop_items.cost can be BIGINT in some
+    -- databases, and RETURN QUERY requires an exact match to the declared
+    -- (cost INTEGER, quantity INTEGER) result columns or it throws 42804.
+    SELECT ui.id, ui.item_id, si.name::text, si.type::text, si.cost::int, ui.quantity::int
     FROM user_inventory ui
     JOIN shop_items si ON si.id = ui.item_id
     WHERE ui.user_id = p_target_id
