@@ -27,6 +27,7 @@ import { showModal, showConfirm } from '@/lib/modal'
 import { getAvatarImage, getItemImage } from '@/lib/utils'
 import AttackAnimation from '@/components/AttackAnimation'
 import BankrobPanel from '@/components/BankrobPanel'
+import ItemStealPanel from '@/components/ItemStealPanel'
 import type { ShopItem, UserInventory, Profile } from '@/lib/supabase'
 
 interface ShopProps {
@@ -263,6 +264,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       case 'name_restore': return '📜'
       case 'display_name_restore': return '✨'
       case 'bankrob': return '🎭'
+      case 'item_steal': return '🥷'
       default: return '📦'
     }
   }, [])
@@ -275,17 +277,25 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
       case 'potion': return { bg: 'linear-gradient(135deg, #2d5a27 0%, #1a3316 100%)', border: '#4caf50', glow: 'rgba(76, 175, 80, 0.4)' }
       case 'pet': return { bg: 'linear-gradient(135deg, #5a3a1a 0%, #3d2811 100%)', border: '#d4a574', glow: 'rgba(212, 165, 116, 0.4)' }
       case 'bankrob': return { bg: 'linear-gradient(135deg, #2d1a4a 0%, #1a0f2e 100%)', border: '#9b59b6', glow: 'rgba(155, 89, 182, 0.4)' }
+      case 'item_steal': return { bg: 'linear-gradient(135deg, #102a26 0%, #0a1a16 100%)', border: '#1abc9c', glow: 'rgba(26, 188, 156, 0.4)' }
       default: return { bg: 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)', border: '#3a3a3a', glow: 'rgba(0, 0, 0, 0.2)' }
     }
   }, [])
 
   const bankrobInv = useMemo(() => inventory.find((inv) => inv.item.type === 'bankrob') || null, [inventory])
+  const itemStealInv = useMemo(() => inventory.find((inv) => inv.item.type === 'item_steal') || null, [inventory])
 
   return (
     <div>
       <BankrobPanel
         userId={userId}
         bankrobInventory={bankrobInv}
+        onChange={() => { loadData(true); onPurchase() }}
+      />
+      <ItemStealPanel
+        userId={userId}
+        stealInventory={itemStealInv}
+        userGold={userGold}
         onChange={() => { loadData(true); onPurchase() }}
       />
       <div style={{ marginBottom: '30px' }}>
@@ -376,7 +386,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
                     alignItems: 'center',
                     height: (item.type === 'pet' || item.type === 'bankrob') ? '160px' : '80px'
                   }}>
-                    {(item.type === 'weapon' || item.type === 'armour' || item.type === 'pet' || item.type === 'bankrob') ? (
+                    {(item.type === 'weapon' || item.type === 'armour' || item.type === 'pet' || item.type === 'bankrob' || item.type === 'item_steal') ? (
                       <img
                         src={getItemImage(item)}
                         alt={item.name}
@@ -584,9 +594,9 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
             borderRadius: '12px',
             fontSize: '14px',
             fontWeight: 600
-          }}>{inventory.filter((inv) => inv.item.type !== 'bankrob').length}</span>
+          }}>{inventory.filter((inv) => inv.item.type !== 'bankrob' && inv.item.type !== 'item_steal').length}</span>
         </h3>
-        {inventory.filter((inv) => inv.item.type !== 'bankrob').length === 0 ? (
+        {inventory.filter((inv) => inv.item.type !== 'bankrob' && inv.item.type !== 'item_steal').length === 0 ? (
           <div style={{
             padding: '60px 40px',
             background: '#0a0a0a',
@@ -601,7 +611,7 @@ export default function Shop({ userId, onPurchase }: ShopProps) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            {inventory.filter((inv) => inv.item.type !== 'bankrob').map((inv) => {
+            {inventory.filter((inv) => inv.item.type !== 'bankrob' && inv.item.type !== 'item_steal').map((inv) => {
               const typeColors = getItemTypeColor(inv.item.type)
               return (
                 <div

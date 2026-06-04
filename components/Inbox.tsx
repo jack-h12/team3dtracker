@@ -10,6 +10,13 @@ import {
   clearBankrobNotifications,
 } from '@/lib/bankrob'
 import type { BankrobNotification } from '@/lib/bankrob'
+import {
+  getItemStealNotifications,
+  getItemStealUnreadCount,
+  markAllItemStealRead,
+  clearItemStealNotifications,
+} from '@/lib/itemSteal'
+import type { ItemStealNotification } from '@/lib/itemSteal'
 
 interface InboxProps {
   userId: string
@@ -18,22 +25,25 @@ interface InboxProps {
 type InboxItem =
   | { kind: 'attack'; created_at: string; is_read: boolean; data: AttackNotification }
   | { kind: 'bankrob'; created_at: string; is_read: boolean; data: BankrobNotification }
+  | { kind: 'item_steal'; created_at: string; is_read: boolean; data: ItemStealNotification }
 
 export default function Inbox({ userId }: InboxProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [notifications, setNotifications] = useState<AttackNotification[]>([])
   const [bankrobNotifs, setBankrobNotifs] = useState<BankrobNotification[]>([])
+  const [itemStealNotifs, setItemStealNotifs] = useState<ItemStealNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const loadUnreadCount = useCallback(async () => {
     try {
-      const [a, b] = await Promise.all([
+      const [a, b, c] = await Promise.all([
         getUnreadCount(userId).catch(() => 0),
         getBankrobUnreadCount(userId).catch(() => 0),
+        getItemStealUnreadCount(userId).catch(() => 0),
       ])
-      setUnreadCount(a + b)
+      setUnreadCount(a + b + c)
     } catch (err) {
       console.error('Error loading unread count:', err)
     }
@@ -42,12 +52,14 @@ export default function Inbox({ userId }: InboxProps) {
   const loadNotifications = useCallback(async () => {
     setLoading(true)
     try {
-      const [a, b] = await Promise.all([
+      const [a, b, c] = await Promise.all([
         getNotifications(userId).catch(() => []),
         getBankrobNotifications(userId).catch(() => []),
+        getItemStealNotifications(userId).catch(() => []),
       ])
       setNotifications(a)
       setBankrobNotifs(b)
+      setItemStealNotifs(c)
     } catch (err) {
       console.error('Error loading notifications:', err)
     } finally {
@@ -63,6 +75,10 @@ export default function Inbox({ userId }: InboxProps) {
       // their result via the BankrobAnimation and the Recent Results section.
       .filter((n) => n.kind !== 'invite_received' && n.kind !== 'planner_won' && n.kind !== 'planner_lost')
       .map((n) => ({ kind: 'bankrob' as const, created_at: n.created_at, is_read: n.is_read, data: n })),
+    ...itemStealNotifs
+      // Hide the thief's own results — they see those in the Item Steal panel/modal.
+      .filter((n) => n.kind !== 'steal_won' && n.kind !== 'steal_lost')
+      .map((n) => ({ kind: 'item_steal' as const, created_at: n.created_at, is_read: n.is_read, data: n })),
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
   // Poll unread count every 30 seconds
@@ -98,10 +114,15 @@ export default function Inbox({ userId }: InboxProps) {
 
   const handleMarkAllRead = async () => {
     try {
-      await Promise.all([markAllRead(userId).catch(() => null), markAllBankrobRead(userId).catch(() => null)])
+      await Promise.all([
+        markAllRead(userId).catch(() => null),
+        markAllBankrobRead(userId).catch(() => null),
+        markAllItemStealRead(userId).catch(() => null),
+      ])
       setUnreadCount(0)
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
       setBankrobNotifs((prev) => prev.map((n) => ({ ...n, is_read: true })))
+      setItemStealNotifs((prev) => prev.map((n) => ({ ...n, is_read: true })))
     } catch (err) {
       console.error('Error marking all read:', err)
     }
@@ -112,9 +133,11 @@ export default function Inbox({ userId }: InboxProps) {
       await Promise.all([
         clearAllNotifications(userId).catch(() => null),
         clearBankrobNotifications(userId).catch(() => null),
+        clearItemStealNotifications(userId).catch(() => null),
       ])
       setNotifications([])
       setBankrobNotifs([])
+      setItemStealNotifs([])
       setUnreadCount(0)
     } catch (err) {
       console.error('Error clearing notifications:', err)
@@ -339,6 +362,51 @@ export default function Inbox({ userId }: InboxProps) {
                         </div>
                         {!notif.is_read && (
                           <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ff6b35', flexShrink: 0, marginTop: '6px' }} />
+                        )}
+                      </div>
+                    </div>
+                  )
+                }
+
+                if (item.kind === 'item_steal') {
+                  const s = item.data
+                  const sPositive = s.gold_delta > 0
+                  const sNegative = s.gold_delta < 0
+                  const sAccent = sPositive ? '#4caf50' : sNegative ? '#ff4444' : '#1abc9c'
+                  return (
+                    <div
+                      key={`is-${s.id}`}
+                      style={{
+                        padding: '14px 16px',
+                        borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                        background: s.is_read ? 'transparent' : 'rgba(26, 188, 156, 0.06)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                        <div style={{ fontSize: '24px', flexShrink: 0, lineHeight: 1, marginTop: '2px' }}>{'\uD83E\uDD77'}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#fff',
+                            fontWeight: s.is_read ? 500 : 700,
+                            lineHeight: 1.4,
+                            marginBottom: '4px',
+                          }}>
+                            {s.message}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            {s.gold_delta !== 0 ? (
+                              <span style={{ fontSize: '13px', fontWeight: 800, color: sAccent }}>
+                                {sPositive ? '+' : ''}{s.gold_delta}g
+                              </span>
+                            ) : <span />}
+                            <span style={{ fontSize: '11px', color: '#666', fontWeight: 500, flexShrink: 0 }}>
+                              {formatTime(s.created_at)}
+                            </span>
+                          </div>
+                        </div>
+                        {!s.is_read && (
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#1abc9c', flexShrink: 0, marginTop: '6px' }} />
                         )}
                       </div>
                     </div>

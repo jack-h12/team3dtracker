@@ -357,7 +357,7 @@ export type FriendRequest = {
 export type ShopItem = {
   id: string
   name: string
-  type: 'armour' | 'weapon' | 'potion' | 'pet' | 'name_change' | 'name_restore' | 'display_name_restore' | 'bankrob'
+  type: 'armour' | 'weapon' | 'potion' | 'pet' | 'name_change' | 'name_restore' | 'display_name_restore' | 'bankrob' | 'item_steal'
   cost: number
   effect: string | { description: string; protection?: number; damage?: number } // Can be JSONB from database or parsed object
 }

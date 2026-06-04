@@ -41,6 +41,24 @@ const FIVE_M_CATEGORIES = [
   { key: 'mind', label: 'Mind', emoji: '🧠' },
   { key: 'mood', label: 'Mood', emoji: '😊' },
 ] as const
+// Total 5M slots (5 categories × 2 each). Equals the 10-task cap.
+const FIVE_M_SLOT_COUNT = FIVE_M_CATEGORIES.length * TASKS_PER_CATEGORY
+
+// Maps each task to a fixed 5M slot (0-9) by its task_order. Tasks with an
+// out-of-range or colliding slot fall back to the next free slot so none are
+// hidden. Shared by the 5M render and the slot drag-and-drop handlers so they
+// agree on where each task currently sits.
+function buildTasksBySlot(taskList: Task[]): (Task | undefined)[] {
+  const bySlot: (Task | undefined)[] = new Array(FIVE_M_SLOT_COUNT).fill(undefined)
+  for (const t of taskList) {
+    let idx = t.task_order >= 0 && t.task_order < FIVE_M_SLOT_COUNT ? t.task_order : -1
+    if (idx === -1 || bySlot[idx]) {
+      idx = bySlot.findIndex((x) => !x)
+    }
+    if (idx !== -1) bySlot[idx] = t
+  }
+  return bySlot
+}
 
 // ============================================================================
 // STATE SETUP
@@ -88,6 +106,8 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   // Drag and drop state
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null)
+  // Which 5M slot (0-9) is currently being hovered over during a drag
+  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null)
 
   // Daily note state
   const [note, setNote] = useState('')
@@ -472,25 +492,37 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   const [copySources, setCopySources] = useState<{ date: string; count: number }[]>([])
   const [copySourcesLoading, setCopySourcesLoading] = useState(false)
   const [hoveredCopyDate, setHoveredCopyDate] = useState<string | null>(null)
+  const [expandedCopyDate, setExpandedCopyDate] = useState<string | null>(null)
   const [copyPreviews, setCopyPreviews] = useState<Record<string, string[]>>({})
   const previewLoadingRef = useRef<Set<string>>(new Set())
 
-  const handleCopyHover = async (date: string) => {
-    setHoveredCopyDate(date)
+  const loadCopyPreview = async (date: string) => {
     if (copyPreviews[date] || previewLoadingRef.current.has(date)) return
     previewLoadingRef.current.add(date)
     try {
       const lines = await getTaskPreviewForDate(userId, date)
       setCopyPreviews((prev) => ({ ...prev, [date]: lines }))
     } catch {
-      // ignore — hover preview is best-effort
+      // ignore — preview is best-effort
     } finally {
       previewLoadingRef.current.delete(date)
     }
   }
 
+  const handleCopyHover = async (date: string) => {
+    setHoveredCopyDate(date)
+    await loadCopyPreview(date)
+  }
+
+  // Tapping a day expands/collapses its task list (works on mobile without hover)
+  const toggleCopyExpand = async (date: string) => {
+    setExpandedCopyDate((prev) => (prev === date ? null : date))
+    await loadCopyPreview(date)
+  }
+
   const openCopyPicker = async () => {
     setShowCopyPicker(true)
+    setExpandedCopyDate(null)
     setCopySourcesLoading(true)
     try {
       const dates = await getAvailableSourceDates(userId, selectedDate)
@@ -697,6 +729,66 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   const handleDragEnd = () => {
     setDraggedTaskId(null)
     setDragOverTaskId(null)
+    setDragOverSlot(null)
+  }
+
+  // ---- 5M framework drag & drop ----
+  // In the 5M grid each category slot is a drop target. Dragging a task onto a
+  // slot moves it there; if the slot is occupied the two tasks swap slots.
+
+  const handleSlotDragOver = (e: React.DragEvent, slotIndex: number) => {
+    if (!draggedTaskId) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverSlot(slotIndex)
+  }
+
+  const handleSlotDragLeave = () => {
+    setDragOverSlot(null)
+  }
+
+  const handleSlotDrop = async (e: React.DragEvent, targetSlot: number) => {
+    e.preventDefault()
+    setDragOverSlot(null)
+
+    const draggedId = draggedTaskId
+    setDraggedTaskId(null)
+    if (!draggedId) return
+
+    // Resolve current slots from the same mapping the grid renders with, so a
+    // drop lands where the user actually sees the task.
+    const bySlot = buildTasksBySlot(tasks)
+    const fromSlot = bySlot.findIndex((t) => t?.id === draggedId)
+    if (fromSlot === -1 || fromSlot === targetSlot) return
+
+    const dragged = bySlot[fromSlot]!
+    const occupant = bySlot[targetSlot]
+
+    // Move dragged into the target slot; if occupied, the occupant takes the
+    // dragged task's old slot (a swap).
+    const orderUpdates = [{ taskId: dragged.id, order: targetSlot }]
+    if (occupant) orderUpdates.push({ taskId: occupant.id, order: fromSlot })
+
+    const originalTasks = [...tasks]
+    const newTasks = tasks
+      .map((t) => {
+        if (t.id === dragged.id) return { ...t, task_order: targetSlot }
+        if (occupant && t.id === occupant.id) return { ...t, task_order: fromSlot }
+        return t
+      })
+      .sort((a, b) => a.task_order - b.task_order)
+
+    setLoading(true)
+    setTasks(newTasks)
+    try {
+      await updateTaskOrder(userId, orderUpdates)
+    } catch (err) {
+      console.error('Error moving task between slots:', err)
+      setTasks(originalTasks)
+      await showModal('Error', 'Failed to move task', 'error')
+    } finally {
+      setLoading(false)
+    }
   }
 
   // ============================================================================
@@ -740,23 +832,31 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   // ROW RENDERING (shared by the flat list and the 5M framework grid)
   // ============================================================================
 
-  // Renders a single task row. `draggable` is only enabled in the flat list —
-  // the 5M grid pins tasks to fixed category slots, so reordering is disabled.
-  const renderTaskRow = (task: Task, draggable: boolean) => {
-    const canDrag = draggable && !task.is_done && !loading && !isPastDay
+  // Renders a single task row. Drag-and-drop comes in two flavours:
+  // - `listDnd`: the flat list — the row is both a drag source and a drop
+  //   target, reordering tasks by splice.
+  // - `slotDnd`: the 5M grid — the row is a drag source only; the surrounding
+  //   slot wrapper is the drop target (see renderFiveMFramework).
+  const renderTaskRow = (
+    task: Task,
+    opts: { listDnd?: boolean; slotDnd?: boolean } = {}
+  ) => {
+    const { listDnd = false, slotDnd = false } = opts
+    const dndEnabled = listDnd || slotDnd
+    const canDrag = dndEnabled && !task.is_done && !loading && !isPastDay
     return (
       <div
         key={task.id}
         draggable={canDrag}
         onDragStart={canDrag ? (e) => handleDragStart(e, task.id) : undefined}
-        onDragOver={draggable ? (e) => handleDragOver(e, task.id) : undefined}
-        onDragLeave={draggable ? handleDragLeave : undefined}
-        onDrop={draggable ? (e) => handleDrop(e, task.id) : undefined}
-        onDragEnd={draggable ? handleDragEnd : undefined}
-        style={getTaskItemStyle(task, draggable)}
+        onDragOver={listDnd ? (e) => handleDragOver(e, task.id) : undefined}
+        onDragLeave={listDnd ? handleDragLeave : undefined}
+        onDrop={listDnd ? (e) => handleDrop(e, task.id) : undefined}
+        onDragEnd={dndEnabled ? handleDragEnd : undefined}
+        style={getTaskItemStyle(task, dndEnabled)}
       >
         {/* Drag Handle */}
-        {draggable && !task.is_done && !isPastDay && (
+        {dndEnabled && !task.is_done && !isPastDay && (
           <div
             style={{
               marginRight: '8px',
@@ -1145,15 +1245,10 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
   // their stored slot (task_order); any tasks with an out-of-range or colliding
   // slot fall back to the next free slot so none are hidden.
   const renderFiveMFramework = () => {
-    const slotCount = FIVE_M_CATEGORIES.length * TASKS_PER_CATEGORY
-    const tasksBySlot: (Task | undefined)[] = new Array(slotCount).fill(undefined)
-    for (const t of tasks) {
-      let idx = t.task_order >= 0 && t.task_order < slotCount ? t.task_order : -1
-      if (idx === -1 || tasksBySlot[idx]) {
-        idx = tasksBySlot.findIndex((x) => !x)
-      }
-      if (idx !== -1) tasksBySlot[idx] = t
-    }
+    const slotCount = FIVE_M_SLOT_COUNT
+    const tasksBySlot = buildTasksBySlot(tasks)
+    // Slots accept drops only while a task is being dragged on an editable day.
+    const slotsDroppable = !isPastDay && draggedTaskId != null
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -1190,16 +1285,37 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                 {Array.from({ length: TASKS_PER_CATEGORY }).map((_, si) => {
                   const flatIndex = start + si
                   const task = tasksBySlot[flatIndex]
-                  if (task) return renderTaskRow(task, false)
-                  if (activeAddSlot === flatIndex) {
-                    return renderInlineAdd(flatIndex, cat.label)
+                  let content: React.ReactNode
+                  if (task) {
+                    content = renderTaskRow(task, { slotDnd: true })
+                  } else if (activeAddSlot === flatIndex) {
+                    content = renderInlineAdd(flatIndex, cat.label)
+                  } else if (!isPastDay && tasks.length < slotCount) {
+                    // Any empty slot is addable (in any order) unless we're on a
+                    // past day or already at the 10-task cap.
+                    content = renderAddSlotButton(flatIndex, cat.label, `add-${cat.key}-${si}`)
+                  } else {
+                    content = renderEmptySlot(`empty-${cat.key}-${si}`)
                   }
-                  // Any empty slot is addable (in any order) unless we're on a
-                  // past day or already at the 10-task cap.
-                  if (!isPastDay && tasks.length < slotCount) {
-                    return renderAddSlotButton(flatIndex, cat.label, `add-${cat.key}-${si}`)
-                  }
-                  return renderEmptySlot(`empty-${cat.key}-${si}`)
+
+                  // Wrap every slot in a drop target so a dragged task can be
+                  // moved into it (swapping with any occupant).
+                  return (
+                    <div
+                      key={`slot-${flatIndex}`}
+                      onDragOver={slotsDroppable ? (e) => handleSlotDragOver(e, flatIndex) : undefined}
+                      onDragLeave={slotsDroppable ? handleSlotDragLeave : undefined}
+                      onDrop={slotsDroppable ? (e) => handleSlotDrop(e, flatIndex) : undefined}
+                      style={{
+                        borderRadius: '12px',
+                        outline: dragOverSlot === flatIndex ? '2px dashed #ff6b35' : 'none',
+                        outlineOffset: '2px',
+                        transition: 'outline-color 0.15s ease'
+                      }}
+                    >
+                      {content}
+                    </div>
+                  )
                 })}
               </div>
             </div>
@@ -1415,6 +1531,8 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                       year: 'numeric'
                     })
                     const isHovered = hoveredCopyDate === date
+                    const isExpanded = expandedCopyDate === date
+                    const isOpen = isExpanded || isHovered
                     const preview = copyPreviews[date]
                     return (
                       <div
@@ -1423,15 +1541,16 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                         onMouseLeave={() => setHoveredCopyDate((d) => (d === date ? null : d))}
                         style={{
                           background: '#1a1a1a',
-                          border: '1px solid ' + (isHovered ? 'rgba(255, 215, 0, 0.5)' : '#2a2a2a'),
+                          border: '1px solid ' + (isOpen ? 'rgba(255, 215, 0, 0.5)' : '#2a2a2a'),
                           borderRadius: '10px',
                           overflow: 'hidden',
                           transition: 'border-color 0.15s ease'
                         }}
                       >
                         <button
-                          onClick={() => handleCopyFromDate(date)}
+                          onClick={() => toggleCopyExpand(date)}
                           onFocus={() => handleCopyHover(date)}
+                          aria-expanded={isExpanded}
                           style={{
                             width: '100%',
                             display: 'flex',
@@ -1446,12 +1565,21 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                             textAlign: 'left'
                           }}
                         >
-                          <span>{label}</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{
+                              color: '#ffd700',
+                              fontSize: '11px',
+                              transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                              transition: 'transform 0.15s ease',
+                              display: 'inline-block'
+                            }}>▶</span>
+                            <span>{label}</span>
+                          </span>
                           <span style={{ color: '#ffd700', fontSize: '12px' }}>
                             {count} task{count === 1 ? '' : 's'}
                           </span>
                         </button>
-                        {isHovered && (
+                        {isOpen && (
                           <div
                             style={{
                               padding: '0 14px 12px 14px',
@@ -1472,6 +1600,26 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
                                 ))}
                               </ol>
                             )}
+                            <button
+                              onClick={() => handleCopyFromDate(date)}
+                              disabled={preview && preview.length === 0}
+                              style={{
+                                marginTop: '12px',
+                                width: '100%',
+                                padding: '10px 14px',
+                                background: preview && preview.length === 0
+                                  ? '#1a1a1a'
+                                  : 'linear-gradient(135deg, rgba(255, 215, 0, 0.2) 0%, rgba(255, 165, 0, 0.12) 100%)',
+                                color: preview && preview.length === 0 ? '#555' : '#ffd700',
+                                border: '1px solid ' + (preview && preview.length === 0 ? '#2a2a2a' : 'rgba(255, 215, 0, 0.5)'),
+                                borderRadius: '8px',
+                                cursor: preview && preview.length === 0 ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                                fontSize: '13px'
+                              }}
+                            >
+                              📋 Copy from this day
+                            </button>
                           </div>
                         )}
                       </div>
@@ -1638,7 +1786,7 @@ export default function Tasks({ userId, onTaskComplete }: TasksProps) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {tasks.map((task) => renderTaskRow(task, true))}
+            {tasks.map((task) => renderTaskRow(task, { listDnd: true }))}
           </div>
         )}
       </div>
