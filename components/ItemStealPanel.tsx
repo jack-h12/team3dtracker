@@ -36,6 +36,7 @@ export default function ItemStealPanel({ userId, stealInventory, userGold, onCha
   const [target, setTarget] = useState('')
   const [targetItems, setTargetItems] = useState<StealTargetItem[]>([])
   const [targetItemsLoading, setTargetItemsLoading] = useState(false)
+  const [targetItemsError, setTargetItemsError] = useState<string | null>(null)
   const [selectedInvId, setSelectedInvId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [now, setNow] = useState<number>(() => Date.now())
@@ -142,14 +143,24 @@ export default function ItemStealPanel({ userId, stealInventory, userGold, onCha
     if (!modalOpen || !target) {
       setTargetItems([])
       setSelectedInvId('')
+      setTargetItemsError(null)
       return
     }
     let cancelled = false
     setTargetItemsLoading(true)
     setSelectedInvId('')
+    setTargetItemsError(null)
     listStealTargetInventory(target)
       .then((items) => { if (!cancelled) setTargetItems(items) })
-      .catch((err) => { if (!cancelled) { console.error(err); setTargetItems([]) } })
+      .catch((err) => {
+        // Surface the failure instead of silently showing "no items to steal" —
+        // an errored RPC and a genuinely empty inventory are very different.
+        if (!cancelled) {
+          console.error(err)
+          setTargetItems([])
+          setTargetItemsError(err?.message || 'Could not load this player’s items. Please try again.')
+        }
+      })
       .finally(() => { if (!cancelled) setTargetItemsLoading(false) })
     return () => { cancelled = true }
   }, [modalOpen, target])
@@ -398,6 +409,8 @@ export default function ItemStealPanel({ userId, stealInventory, userGold, onCha
                 <div style={{ color: '#ccc', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>ITEM TO STEAL</div>
                 {targetItemsLoading ? (
                   <div style={{ color: '#888', fontSize: 13, padding: '8px 0' }}>Loading their items…</div>
+                ) : targetItemsError ? (
+                  <div style={{ color: '#ff6b6b', fontSize: 13, padding: '8px 0' }}>⚠️ {targetItemsError}</div>
                 ) : targetItems.length === 0 ? (
                   <div style={{ color: '#888', fontSize: 13, padding: '8px 0' }}>This player has no items to steal.</div>
                 ) : (

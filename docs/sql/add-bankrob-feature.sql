@@ -84,19 +84,49 @@ CREATE INDEX IF NOT EXISTS idx_bankrob_invites_attempt ON bankrob_invites(attemp
 ALTER TABLE bankrob_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bankrob_invites ENABLE ROW LEVEL SECURITY;
 
+-- Cross-table checks go through SECURITY DEFINER helpers so the two SELECT
+-- policies don't reference each other's table inline and recurse forever
+-- (42P17). A SECURITY DEFINER function runs as owner and bypasses the queried
+-- table's RLS, breaking the cycle.
+CREATE OR REPLACE FUNCTION bankrob_user_is_invited(p_attempt_id UUID, p_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM bankrob_invites bi
+    WHERE bi.attempt_id = p_attempt_id AND bi.invited_user_id = p_user_id
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION bankrob_attempt_planner(p_attempt_id UUID)
+RETURNS UUID
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT planner_id FROM bankrob_attempts WHERE id = p_attempt_id;
+$$;
+
+GRANT EXECUTE ON FUNCTION bankrob_user_is_invited(UUID, UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION bankrob_attempt_planner(UUID) TO authenticated;
+
 DROP POLICY IF EXISTS "Read attempts you're involved in" ON bankrob_attempts;
 CREATE POLICY "Read attempts you're involved in" ON bankrob_attempts FOR SELECT
   USING (
     auth.uid() = planner_id
     OR auth.uid() = target_id
-    OR EXISTS (SELECT 1 FROM bankrob_invites bi WHERE bi.attempt_id = bankrob_attempts.id AND bi.invited_user_id = auth.uid())
+    OR bankrob_user_is_invited(id, auth.uid())
   );
 
 DROP POLICY IF EXISTS "Read invites you're involved in" ON bankrob_invites;
 CREATE POLICY "Read invites you're involved in" ON bankrob_invites FOR SELECT
   USING (
     auth.uid() = invited_user_id
-    OR EXISTS (SELECT 1 FROM bankrob_attempts ba WHERE ba.id = bankrob_invites.attempt_id AND ba.planner_id = auth.uid())
+    OR bankrob_attempt_planner(attempt_id) = auth.uid()
   );
 
 -- All writes happen via SECURITY DEFINER functions; no direct INSERT/UPDATE/DELETE policy.
